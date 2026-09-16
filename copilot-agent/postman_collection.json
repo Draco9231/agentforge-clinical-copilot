@@ -1,0 +1,96 @@
+{
+	"info": {
+		"name": "Clinical Co-Pilot Agent",
+		"description": "Runnable collection for every core agent endpoint. Set the {{baseUrl}} variable to http://localhost:8787 for local dev or the deployed workers.dev URL for production.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{ "key": "baseUrl", "value": "http://localhost:8787" },
+		{ "key": "openemrUsername", "value": "admin" },
+		{ "key": "openemrPassword", "value": "pass" },
+		{ "key": "accessToken", "value": "" },
+		{ "key": "patientId", "value": "1" }
+	],
+	"item": [
+		{
+			"name": "Health check",
+			"request": { "method": "GET", "url": "{{baseUrl}}/health" }
+		},
+		{
+			"name": "Readiness check (validates OpenEMR, Anthropic key, D1)",
+			"request": { "method": "GET", "url": "{{baseUrl}}/ready" }
+		},
+		{
+			"name": "Login (OpenEMR password grant, returns access_token)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"if (pm.response.code === 200) {",
+							"  const body = pm.response.json();",
+							"  pm.collectionVariables.set('accessToken', body.access_token);",
+							"}"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [{ "key": "Content-Type", "value": "application/json" }],
+				"url": "{{baseUrl}}/api/login",
+				"body": {
+					"mode": "raw",
+					"raw": "{\"username\": \"{{openemrUsername}}\", \"password\": \"{{openemrPassword}}\"}"
+				}
+			}
+		},
+		{
+			"name": "List patients (proxied FHIR search)",
+			"request": {
+				"method": "GET",
+				"header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+				"url": "{{baseUrl}}/api/patients"
+			}
+		},
+		{
+			"name": "Chat: ask about a patient",
+			"request": {
+				"method": "POST",
+				"header": [
+					{ "key": "Content-Type", "value": "application/json" },
+					{ "key": "Authorization", "value": "Bearer {{accessToken}}" }
+				],
+				"url": "{{baseUrl}}/api/chat",
+				"body": {
+					"mode": "raw",
+					"raw": "{\"patientId\": \"{{patientId}}\", \"message\": \"What's currently active for this patient?\"}"
+				}
+			}
+		},
+		{
+			"name": "Chat: missing Authorization (expect 401)",
+			"request": {
+				"method": "POST",
+				"header": [{ "key": "Content-Type", "value": "application/json" }],
+				"url": "{{baseUrl}}/api/chat",
+				"body": {
+					"mode": "raw",
+					"raw": "{\"patientId\": \"{{patientId}}\", \"message\": \"hi\"}"
+				}
+			}
+		},
+		{
+			"name": "Chat: malformed body (expect 400)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{ "key": "Content-Type", "value": "application/json" },
+					{ "key": "Authorization", "value": "Bearer {{accessToken}}" }
+				],
+				"url": "{{baseUrl}}/api/chat",
+				"body": { "mode": "raw", "raw": "{}" }
+			}
+		}
+	]
+}

@@ -1,0 +1,20 @@
+{
+	"name": "clinical-copilot-agent",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-09-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": {
+		"enabled": true,
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "clinical-copilot-db",
+			"database_id": "7c5bec03-a608-4f88-864f-d2761d89c00a",
+		},
+	],
+	"vars": {
+		"OPENEMR_BASE_URL": "https://localhost:9300",
+		"OPENEMR_API_SITE": "default",
+	},
+}

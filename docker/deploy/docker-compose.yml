@@ -1,0 +1,66 @@
+# Reference compose file for the public deployment. Railway itself runs this as two
+# separate services (a managed MySQL plugin + this openemr image, wired together with
+# Railway variable references) rather than executing this file directly — see
+# ARCHITECTURE.md and RAILWAY_DEPLOY.md for the exact mapping. Kept here so the
+# deployment topology is reviewable/runnable the same way locally once disk space allows.
+#
+# Differences from docker/production/docker-compose.yml (the OpenEMR-provided default):
+#   - Enables the REST + FHIR API and the OAuth2 password grant out of the box, so the
+#     Clinical Co-Pilot agent can authenticate against it without a manual admin-UI step.
+#     (Same OPENEMR_SETTING_* pattern used in docker/development-easy/docker-compose.yml.)
+#   - Drops selenium/couchdb/openldap/mailpit — not needed for this deployment target.
+services:
+  mysql:
+    restart: always
+    image: mariadb:11.8.8@sha256:be1ef4fe5f14589325c08a41c76334097ce66c86264b75e1d28342c742782a61
+    command: ['mariadbd', '--character-set-server=utf8mb4']
+    volumes:
+      - databasevolume:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set a strong root password}
+    healthcheck:
+      test: ['CMD', '/usr/local/bin/healthcheck.sh', '--su-mysql', '--connect', '--innodb_initialized']
+      start_period: 1m
+      start_interval: 10s
+      interval: 1m
+      timeout: 5s
+      retries: 3
+  openemr:
+    restart: always
+    image: openemr/openemr:flex@sha256:1d2c8345a320cf2985c9d02138951267739ec498559ca724b3d5397e4568482e
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - logvolume01:/var/log
+      - sitevolume:/var/www/localhost/htdocs/openemr/sites
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_ROOT_PASS: ${MYSQL_ROOT_PASSWORD:?set a strong root password}
+      MYSQL_USER: openemr
+      MYSQL_PASS: ${OPENEMR_DB_PASSWORD:?set a password for the openemr db user}
+      OE_USER: admin
+      OE_PASS: ${OPENEMR_ADMIN_PASSWORD:?set the OpenEMR admin login password}
+      OPENEMR_SETTING_rest_api: 1
+      OPENEMR_SETTING_rest_fhir_api: 1
+      OPENEMR_SETTING_rest_system_scopes_api: 1
+      OPENEMR_SETTING_oauth_password_grant: 3
+      OPENEMR_SETTING_site_addr_oath: ${PUBLIC_BASE_URL:?e.g. https://your-app.up.railway.app}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD', '/usr/bin/curl', '--fail', '--insecure', '--location', '--show-error',
+          '--silent', 'https://localhost/meta/health/readyz',
+        ]
+      start_period: 3m
+      start_interval: 10s
+      interval: 1m
+      timeout: 5s
+      retries: 3
+volumes:
+  logvolume01: {}
+  sitevolume: {}
+  databasevolume: {}
