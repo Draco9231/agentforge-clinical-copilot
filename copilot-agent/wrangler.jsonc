@@ -1,0 +1,21 @@
+{
+	"name": "clinical-copilot-agent",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-09-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": {
+		"enabled": true,
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "clinical-copilot-db",
+			"database_id": "7c5bec03-a608-4f88-864f-d2761d89c00a",
+		},
+	],
+	"vars": {
+		"OPENEMR_BASE_URL": "https://openemr-production-8057.up.railway.app",
+		"OPENEMR_API_SITE": "default",
+		"OPENEMR_CLIENT_ID": "oh55OixVt2UIygyYPr5dtNUYE9WacNlDYNlqXmeWYOU",
+	},
+}
