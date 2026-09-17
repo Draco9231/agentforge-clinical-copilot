@@ -2,6 +2,8 @@ export interface Env {
 	DB: D1Database;
 	OPENEMR_BASE_URL: string;
 	OPENEMR_API_SITE: string;
+	OPENEMR_CLIENT_ID: string;
+	OPENEMR_CLIENT_SECRET: string;
 	ANTHROPIC_API_KEY: string;
 }
 

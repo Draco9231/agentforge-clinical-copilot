@@ -94,13 +94,17 @@ export default {
 			const { username, password } = (await request.json()) as { username: string; password: string };
 			const start = Date.now();
 			try {
+				const basicAuth = btoa(`${env.OPENEMR_CLIENT_ID}:${env.OPENEMR_CLIENT_SECRET}`);
 				const tokenRes = await fetch(`${env.OPENEMR_BASE_URL}/oauth2/${env.OPENEMR_API_SITE}/token`, {
 					method: 'POST',
-					headers: { 'content-type': 'application/x-www-form-urlencoded' },
+					headers: {
+						'content-type': 'application/x-www-form-urlencoded',
+						authorization: `Basic ${basicAuth}`,
+					},
 					body: new URLSearchParams({
 						grant_type: 'password',
-						client_id: 'clinical-copilot-demo',
-						scope: 'openid api:oemr api:fhir user/Patient.read user/Condition.read user/MedicationRequest.read user/Observation.read',
+						client_id: env.OPENEMR_CLIENT_ID,
+						scope: 'openid offline_access api:oemr api:fhir user/Patient.read user/Condition.read user/MedicationRequest.read user/Observation.read',
 						user_role: 'users',
 						username,
 						password,

@@ -14,7 +14,8 @@
 		},
 	],
 	"vars": {
-		"OPENEMR_BASE_URL": "https://localhost:9300",
+		"OPENEMR_BASE_URL": "https://openemr-production-8057.up.railway.app",
 		"OPENEMR_API_SITE": "default",
+		"OPENEMR_CLIENT_ID": "T7knuzL64gfhu3TEGqB1SZ3gqmRE68k1nZgqKJ6qej8",
 	},
 }
