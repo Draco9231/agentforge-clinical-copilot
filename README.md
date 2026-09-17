@@ -29,8 +29,9 @@ This fork adds a **Clinical Co-Pilot** AI agent on top of OpenEMR, built for the
 - **[copilot-agent/](./copilot-agent/)** — the agent itself (Cloudflare Worker + D1); see its own [README](./copilot-agent/README.md) for setup/run/test instructions.
 - **[DEMO_NOTES.md](./DEMO_NOTES.md)** — plain-language demo video script (not a technical doc).
 
-**Deployed app URL:** _pending — OpenEMR deployment to Railway in progress; this line will be
-updated with the live URL once available._
+**Deployed app URLs:**
+- Clinical Co-Pilot agent (start here): https://clinical-copilot-agent.genesysx.workers.dev
+- OpenEMR (the EHR itself): https://openemr-production-8057.up.railway.app
 
 **Setup guide:** OpenEMR itself runs via Docker Compose (`docker/deploy/docker-compose.yml` for
 the public deployment; `docker/development-easy/` for local dev, see below). The agent

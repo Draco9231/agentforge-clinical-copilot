@@ -45,7 +45,12 @@ function bundleEntries(bundle: any): any[] {
 export async function fetchPatientChart(env: Env, token: string, patientId: string): Promise<PatientChart> {
 	const [patient, conditions, medications, observations] = await Promise.all([
 		fhirGet(env, token, `/Patient/${patientId}`),
-		fhirGet(env, token, `/Condition?patient=${patientId}&clinical-status=active`),
+		// Not filtered server-side by clinical-status: OpenEMR's FHIR server does not
+		// match the bare token form (`clinical-status=active`) reliably against
+		// Condition.clinicalStatus, unlike MedicationRequest's `status` parameter which
+		// does. Status is still surfaced per-condition in the mapped output below, so
+		// the model (and verification layer) sees it either way.
+		fhirGet(env, token, `/Condition?patient=${patientId}`),
 		fhirGet(env, token, `/MedicationRequest?patient=${patientId}&status=active`),
 		fhirGet(env, token, `/Observation?patient=${patientId}&_sort=-date&_count=10`),
 	]);

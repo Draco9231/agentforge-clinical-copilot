@@ -39,7 +39,12 @@ it currently means this Worker sees a plaintext password in transit at login. (3
 clinical rule engine yet (drug interactions, dosage thresholds) — today's agent can tell you
 what's on the chart, not whether it's clinically sound. (4) tool coverage is deliberately narrow
 (Patient/Condition/MedicationRequest/Observation) and traces directly to USERS.md's UC-1–UC-3;
-broader chart access is a later stage, not a bigger fetch bolted on today.
+broader chart access is a later stage, not a bigger fetch bolted on today. (5) confirmed live: the
+Observation mapping reads `valueQuantity` at the top level, so component-based panels (e.g. a
+single blood-pressure Observation with separate systolic/diastolic `component[]` entries) surface
+as "recorded, value n/a" rather than the actual numbers. In a live test this produced exactly the
+intended failure mode — the agent said the reading wasn't available rather than guessing it — but
+the underlying gap (parsing `component[]`) is a real Stage-2 fix, not a feature.
 
 ---
 

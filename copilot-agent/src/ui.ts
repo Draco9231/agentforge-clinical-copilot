@@ -28,8 +28,8 @@ export function renderChatPage(openemrBaseUrl: string, apiSite: string): string 
 
 <div id="login">
   <strong>Log in with your OpenEMR account</strong>
-  <input id="username" placeholder="username (e.g. admin)" value="admin" />
-  <input id="password" type="password" placeholder="password (e.g. pass)" value="pass" />
+  <input id="username" placeholder="OpenEMR username" />
+  <input id="password" type="password" placeholder="OpenEMR password" />
   <button onclick="login()">Log in</button>
   <div id="loginError" style="color:#b00020"></div>
 </div>
