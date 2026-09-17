@@ -16,6 +16,29 @@
 
 [![Backers on Open Collective](https://opencollective.com/openemr/backers/badge.svg)](#backers) [![Sponsors on Open Collective](https://opencollective.com/openemr/sponsors/badge.svg)](#sponsors)
 
+# AgentForge — Clinical Co-Pilot
+
+This fork adds a **Clinical Co-Pilot** AI agent on top of OpenEMR, built for the Gauntlet AI
+"AgentForge" project (Week 1). Start here:
+
+- **[ARCHITECTURE.md](./ARCHITECTURE.md)** — how the agent is built, its design decisions, and known limitations (read the summary at the top first).
+- **[USERS.md](./USERS.md)** — who this is for and the specific use cases it addresses.
+- **[AUDIT.md](./AUDIT.md)** — security/performance/architecture/data-quality/compliance audit of this codebase.
+- **[KEY_METRICS.md](./KEY_METRICS.md)** — how we'd measure whether this is actually working.
+- **[AI_COST_ANALYSIS.md](./AI_COST_ANALYSIS.md)** — cost model and scaling assumptions.
+- **[copilot-agent/](./copilot-agent/)** — the agent itself (Cloudflare Worker + D1); see its own [README](./copilot-agent/README.md) for setup/run/test instructions.
+- **[DEMO_NOTES.md](./DEMO_NOTES.md)** — plain-language demo video script (not a technical doc).
+
+**Deployed app URL:** _pending — OpenEMR deployment to Railway in progress; this line will be
+updated with the live URL once available._
+
+**Setup guide:** OpenEMR itself runs via Docker Compose (`docker/deploy/docker-compose.yml` for
+the public deployment; `docker/development-easy/` for local dev, see below). The agent
+(`copilot-agent/`) is a separate Cloudflare Worker — see its README for `npm install` / `npm run
+dev` / `npm run deploy` instructions. Full rationale for this split is in ARCHITECTURE.md.
+
+---
+
 # OpenEMR
 
 [OpenEMR](https://open-emr.org) is a Free and Open Source electronic health records and medical practice management application. It features fully integrated electronic health records, practice management, scheduling, electronic billing, internationalization, free support, a vibrant community, and a whole lot more. It runs on Windows, Linux, Mac OS X, and many other platforms.
