@@ -7,7 +7,7 @@ larger eval set (ambiguous queries, unauthorized-patient probing against a *real
 instance, multi-turn context retention) is explicit follow-up work, not silently skipped — see
 "Not yet covered" below.
 
-## Layer 1: `src/verify.test.ts` — run with `npm test`
+## Layer 1: `src/verify.test.ts` and `src/schemas.test.ts` — run with `npm test`
 
 | Test | Category | Guards against |
 |---|---|---|
@@ -16,8 +16,14 @@ instance, multi-turn context retention) is explicit follow-up work, not silently
 | `boundary: empty patient record does not crash and yields degraded for a claim-free answer` | Boundary (missing data) | Crash or false-positive "verified" on a patient with no chart data at all |
 | `boundary: empty-string source_field is treated as missing, not a crash` | Boundary (malformed input) | A malformed/blank citation crashing verification instead of failing safe |
 | `regression: flattenChart field-key format stays stable` | Regression | Silent breakage of the field-key naming contract the model is prompted against, which would make every future citation fail to verify without an obvious cause |
+| `agentAnswerSchema: accepts a well-formed submit_answer payload` | Invariant | The zod schema being stricter than the Anthropic tool's own `input_schema` |
+| `agentAnswerSchema: rejects a tool call missing citations` | Boundary (malformed model output) | A malformed `submit_answer` call (the Anthropic tools API's `input_schema` is advisory, not enforced) reaching `verifyAnswer()` as an unchecked `as AgentAnswer` cast and crashing on `.filter` |
+| `agentAnswerSchema: rejects a citation with a non-string source_field` | Boundary (malformed model output) | Silent type coercion of a malformed citation field instead of a hard rejection |
+| `chatRequestSchema: accepts a minimal valid request` | Invariant | The request schema rejecting legitimate minimal requests |
+| `chatRequestSchema: rejects an empty message string` | Boundary (malformed input) | The prior truthiness-only check (`!payload.message`) that a request could route around in edge cases the schema now closes |
+| `chatRequestSchema: rejects a history entry with an invalid role` | Boundary (malformed input) | An invalid conversation-history role reaching the LLM prompt unchecked |
 
-**Result at time of writing:** 5/5 passing (`npm test` inside `copilot-agent/`).
+**Result at time of writing:** 11/11 passing (`npm test` inside `copilot-agent/`).
 
 ## Layer 2: HTTP boundary tests against the running Worker (`wrangler dev`, local)
 

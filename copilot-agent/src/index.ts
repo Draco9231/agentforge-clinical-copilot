@@ -1,8 +1,9 @@
 import type { Env } from './types';
 import { fetchPatientChart, OpenEmrAuthError } from './openemr';
-import { askAgent, type ConversationTurn } from './agent';
+import { askAgent } from './agent';
 import { verifyAnswer } from './verify';
 import { renderChatPage } from './ui';
+import { chatRequestSchema, loginRequestSchema } from './schemas';
 
 async function logStep(
 	env: Env,
@@ -91,7 +92,19 @@ export default {
 		// + PKCE so credentials never pass through this service at all.
 		if (url.pathname === '/api/login' && request.method === 'POST') {
 			const correlationId = crypto.randomUUID();
-			const { username, password } = (await request.json()) as { username: string; password: string };
+			let loginBody: unknown;
+			try {
+				loginBody = await request.json();
+			} catch {
+				return cors(new Response(JSON.stringify({ error: 'invalid JSON body', correlationId }), { status: 400 }));
+			}
+			const loginParsed = loginRequestSchema.safeParse(loginBody);
+			if (!loginParsed.success) {
+				return cors(
+					new Response(JSON.stringify({ error: 'username and password are required', correlationId }), { status: 400 }),
+				);
+			}
+			const { username, password } = loginParsed.data;
 			const start = Date.now();
 			try {
 				const basicAuth = btoa(`${env.OPENEMR_CLIENT_ID}:${env.OPENEMR_CLIENT_SECRET}`);
@@ -144,15 +157,22 @@ export default {
 			}
 			const token = auth.replace(/^Bearer\s+/i, '');
 
-			let payload: { patientId: string; message: string; conversationId?: string; history?: ConversationTurn[] };
+			let chatBody: unknown;
 			try {
-				payload = await request.json();
+				chatBody = await request.json();
 			} catch {
 				return cors(new Response(JSON.stringify({ error: 'invalid JSON body', correlationId }), { status: 400 }));
 			}
-			if (!payload.patientId || !payload.message) {
-				return cors(new Response(JSON.stringify({ error: 'patientId and message are required', correlationId }), { status: 400 }));
+			const chatParsed = chatRequestSchema.safeParse(chatBody);
+			if (!chatParsed.success) {
+				return cors(
+					new Response(
+						JSON.stringify({ error: 'patientId and message are required', correlationId, details: chatParsed.error.issues }),
+						{ status: 400 },
+					),
+				);
 			}
+			const payload = chatParsed.data;
 
 			const conversationId = payload.conversationId ?? crypto.randomUUID();
 			const history = payload.history ?? [];
