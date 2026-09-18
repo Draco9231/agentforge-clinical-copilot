@@ -1,5 +1,6 @@
 import type { AgentAnswer, Env, PatientChart } from './types';
 import { flattenChart } from './verify';
+import { agentAnswerSchema } from './schemas';
 
 const SUBMIT_ANSWER_TOOL = {
 	name: 'submit_answer',
@@ -89,5 +90,12 @@ export async function askAgent(
 	if (!toolUse) {
 		throw new Error('Model did not return a submit_answer tool call');
 	}
-	return toolUse.input as AgentAnswer;
+	const parsed = agentAnswerSchema.safeParse(toolUse.input);
+	if (!parsed.success) {
+		// The Anthropic tools API's input_schema is advisory, not enforced on the wire — this
+		// is the actual runtime guarantee that a malformed tool call never reaches verifyAnswer(),
+		// which assumes `citations` is an array and would otherwise throw on `.filter`.
+		throw new Error(`Model's submit_answer call did not match the expected shape: ${parsed.error.message}`);
+	}
+	return parsed.data as AgentAnswer;
 }
