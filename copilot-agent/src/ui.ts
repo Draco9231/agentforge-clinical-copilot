@@ -34,8 +34,9 @@ export function renderChatPage(openemrBaseUrl: string, apiSite: string): string 
 </div>
 
 <div id="app">
-  <label for="patientId">Patient ID</label>
-  <input id="patientId" placeholder="e.g. 1" />
+  <label for="patientId">Patient</label>
+  <select id="patientId" onchange="onPatientChange()"><option value="">Loading patients…</option></select>
+  <div id="patientIdHint" class="hint"></div>
   <div id="messages"></div>
   <textarea id="message" rows="2" placeholder="Ask about this patient's meds, conditions, recent labs..."></textarea>
   <button onclick="send()">Ask</button>
@@ -54,8 +55,40 @@ let history = [];
     token = stored;
     document.getElementById('login').style.display = 'none';
     document.getElementById('app').style.display = 'block';
+    loadPatients();
   }
 })();
+
+// A physician has ~90 seconds between rooms — typing or memorizing a raw FHIR patient ID
+// (a UUID) is not something anyone does in that window. This replaces that with a name + DOB
+// picker; the raw ID is still shown (loadPatients/onPatientChange below) for anyone who needs
+// it for debugging or cross-referencing, just never something a user has to type or remember.
+async function loadPatients() {
+  const select = document.getElementById('patientId');
+  try {
+    const res = await fetch('/api/patients', { headers: { Authorization: 'Bearer ' + token } });
+    const bundle = await res.json();
+    const entries = (bundle.entry || []).map(e => e.resource);
+    if (!res.ok || entries.length === 0) {
+      select.innerHTML = '<option value="">No patients found</option>';
+      return;
+    }
+    select.innerHTML = entries.map(function (p) {
+      const name = p.name && p.name[0] ? [(p.name[0].given || []).join(' '), p.name[0].family].filter(Boolean).join(' ') : 'Unknown';
+      const dob = p.birthDate ? ' — DOB ' + p.birthDate : '';
+      return '<option value="' + p.id + '">' + name + dob + '</option>';
+    }).join('');
+    onPatientChange();
+  } catch (e) {
+    select.innerHTML = '<option value="">Could not load patients</option>';
+  }
+}
+
+function onPatientChange() {
+  const select = document.getElementById('patientId');
+  const id = select.value;
+  document.getElementById('patientIdHint').textContent = id ? 'Patient ID: ' + id : '';
+}
 
 function addMessage(role, text, meta) {
   const el = document.createElement('div');
