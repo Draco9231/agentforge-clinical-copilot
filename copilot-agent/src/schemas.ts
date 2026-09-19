@@ -53,3 +53,11 @@ export const loginRequestSchema = z.object({
 	username: z.string().min(1),
 	password: z.string().min(1),
 });
+
+// judge.ts's second-pass faithfulness check tool output. Same reasoning as agentAnswerSchema:
+// the Anthropic tools API's input_schema is advisory, not enforced on the wire, and this result
+// feeds directly into what verification status gets shown to a physician — it needs the same
+// runtime guarantee as the primary answer, not a bare cast.
+export const judgeResultSchema = z.object({
+	unfaithfulClaims: z.array(z.string()).optional().default([]),
+});
