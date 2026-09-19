@@ -1,8 +1,9 @@
 import type { Env } from './types';
 import { fetchPatientChart, OpenEmrAuthError } from './openemr';
-import { askAgent } from './agent';
+import { askAgent, ModelCallError } from './agent';
 import { verifyAnswer } from './verify';
 import { judgeFaithfulness } from './judge';
+import { estimateCostUsd } from './cost';
 import { renderChatPage } from './ui';
 import { chatRequestSchema, loginRequestSchema } from './schemas';
 import { buildAuthorizeRedirect, readPkceSession, clearPkceCookie, exchangeCodeForToken } from './oauth';
@@ -263,10 +264,24 @@ location.replace('/');
 			const llmStart = Date.now();
 			let answer;
 			try {
-				answer = await askAgent(env, chart, payload.message, history);
-				await logStep(env, ctx, correlationId, 'llm:call', 'ok', Date.now() - llmStart, { citationCount: answer.citations.length });
+				const askResult = await askAgent(env, chart, payload.message, history);
+				answer = askResult.answer;
+				// Found live (2026-09-18) auditing this project's own observability requirements: real
+				// token usage/cost was never captured anywhere (see cost.ts). citationCount alone
+				// answered "did it work," not "how many tokens, at what cost" — both explicitly
+				// required by the case study's Observability section.
+				await logStep(env, ctx, correlationId, 'llm:call', 'ok', Date.now() - llmStart, {
+					citationCount: answer.citations.length,
+					inputTokens: askResult.usage.inputTokens,
+					outputTokens: askResult.usage.outputTokens,
+					estimatedCostUsd: estimateCostUsd(askResult.usage),
+				});
 			} catch (e) {
-				await logStep(env, ctx, correlationId, 'llm:call', 'error', Date.now() - llmStart, String(e));
+				const usage = e instanceof ModelCallError ? e.usage : undefined;
+				await logStep(env, ctx, correlationId, 'llm:call', 'error', Date.now() - llmStart, {
+					error: String(e),
+					...(usage ? { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, estimatedCostUsd: estimateCostUsd(usage) } : {}),
+				});
 				return cors(
 					new Response(JSON.stringify({ error: 'The assistant is temporarily unavailable. Please retry.', correlationId }), {
 						status: 502,
@@ -295,6 +310,9 @@ location.replace('/');
 					unfaithfulClaims = judgeResult.unfaithfulClaims;
 					await logStep(env, ctx, correlationId, 'verify:judge', 'ok', Date.now() - judgeStart, {
 						unfaithfulCount: unfaithfulClaims.length,
+						inputTokens: judgeResult.usage.inputTokens,
+						outputTokens: judgeResult.usage.outputTokens,
+						estimatedCostUsd: estimateCostUsd(judgeResult.usage),
 					});
 					if (unfaithfulClaims.length > 0 && finalStatus === 'verified') {
 						finalStatus = 'degraded';

@@ -1,6 +1,7 @@
 import type { AgentAnswer, Env, PatientChart } from './types';
 import { flattenChart } from './verify';
 import { judgeResultSchema } from './schemas';
+import type { ModelUsage } from './cost';
 
 // Addresses ARCHITECTURE.md's known limitation (1): verify.ts's existing check only confirms a
 // citation's source_field *exists* in the chart — it does not check that the claim is a faithful
@@ -23,6 +24,7 @@ import { judgeResultSchema } from './schemas';
 //   has nothing for this pass to add.
 export interface JudgeResult {
 	unfaithfulClaims: string[];
+	usage: ModelUsage;
 }
 
 const JUDGE_TOOL = {
@@ -46,7 +48,7 @@ const JUDGE_TOOL = {
 
 export async function judgeFaithfulness(env: Env, chart: PatientChart, answer: AgentAnswer): Promise<JudgeResult> {
 	if (answer.citations.length === 0) {
-		return { unfaithfulClaims: [] };
+		return { unfaithfulClaims: [], usage: { inputTokens: 0, outputTokens: 0 } };
 	}
 
 	const fields = flattenChart(chart);
@@ -83,6 +85,11 @@ export async function judgeFaithfulness(env: Env, chart: PatientChart, answer: A
 	}
 
 	const data = (await res.json()) as any;
+	const usage: ModelUsage = {
+		inputTokens: typeof data.usage?.input_tokens === 'number' ? data.usage.input_tokens : 0,
+		outputTokens: typeof data.usage?.output_tokens === 'number' ? data.usage.output_tokens : 0,
+	};
+
 	const toolUse = data.content?.find((b: any) => b.type === 'tool_use' && b.name === 'submit_judgment');
 	if (!toolUse) {
 		throw new Error('Judge did not return a submit_judgment tool call');
@@ -93,7 +100,7 @@ export async function judgeFaithfulness(env: Env, chart: PatientChart, answer: A
 		throw new Error(`Judge's submit_judgment call did not match the expected shape: ${parsed.error.message}`);
 	}
 
-	return { unfaithfulClaims: filterKnownClaims(parsed.data.unfaithfulClaims, answer) };
+	return { unfaithfulClaims: filterKnownClaims(parsed.data.unfaithfulClaims, answer), usage };
 }
 
 // Pure and separately tested: the judge is asked for exact verbatim claim text, but "exact" from

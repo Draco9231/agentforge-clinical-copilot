@@ -196,6 +196,11 @@ OpenEMR (Docker Compose: openemr + mariadb), deployed on Railway
   2026-09-18, and it surfaced a real insecure-by-default finding in OpenEMR's own Add User form
   along the way (`AUDIT.md`'s Finding S-5) before the actual 403-denial result was confirmed
   live. See `EVAL_DATASET.md`.
+- Real token usage/cost tracking (`cost.ts`) — found live auditing this project's own
+  requirements that neither `agent.ts` nor `judge.ts` ever read Anthropic's own `usage` field, a
+  real gap against the case study's explicit "how many tokens, at what cost" observability
+  requirement. `AI_COST_ANALYSIS.md` now cites real measured per-query cost (~$0.013/query, two
+  LLM calls) instead of a Day 1 estimate.
 
 **Still deferred:**
 - Streaming `/api/chat` responses — the load test's honest finding is that p50 latency (~9-10s,
