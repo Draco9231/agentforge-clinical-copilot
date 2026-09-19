@@ -63,6 +63,28 @@ export async function askAgent(
 		{ role: 'user' as const, content: question },
 	];
 
+	// Live-tested finding (2026-09-17, both under 50-concurrent load AND on a single unconcurrent
+	// request): the model occasionally omits `citations` from the submit_answer call entirely —
+	// this isn't a concurrency artifact, it's the tool call's own non-determinism. One bounded
+	// retry (not a loop) trades a few seconds of latency for not failing a request outright over
+	// a re-askable model quirk; if the retry also fails, something is actually wrong and it
+	// should surface as an error rather than retry indefinitely.
+	let lastError: unknown;
+	for (let attempt = 0; attempt < 2; attempt++) {
+		try {
+			return await callModel(env, system, messages);
+		} catch (e) {
+			lastError = e;
+		}
+	}
+	throw lastError;
+}
+
+async function callModel(
+	env: Env,
+	system: string,
+	messages: { role: 'user' | 'assistant'; content: string }[],
+): Promise<AgentAnswer> {
 	const res = await fetch('https://api.anthropic.com/v1/messages', {
 		method: 'POST',
 		headers: {
@@ -72,7 +94,11 @@ export async function askAgent(
 		},
 		body: JSON.stringify({
 			model: 'claude-sonnet-5',
-			max_tokens: 1024,
+			// Load-tested finding (2026-09-17): at 1024, concurrent load produced tool calls
+			// truncated mid-generation, dropping the trailing `uncertain_about` field entirely
+			// (confirmed via agent_logs: zod rejected "uncertain_about: undefined" ~18% of
+			// requests at 50 concurrent). 4096 gives real headroom for a citation-heavy answer.
+			max_tokens: 4096,
 			system,
 			messages,
 			tools: [SUBMIT_ANSWER_TOOL],

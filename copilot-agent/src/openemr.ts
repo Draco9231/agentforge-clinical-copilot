@@ -8,8 +8,11 @@ import type { Env, PatientChart } from './types';
 // token fails here exactly as it would against OpenEMR directly (401/403),
 // and that status is passed straight back to the caller.
 export class OpenEmrAuthError extends Error {
-	constructor(public status: number, message: string) {
+	status: number;
+
+	constructor(status: number, message: string) {
 		super(message);
+		this.status = status;
 	}
 }
 
@@ -37,6 +40,43 @@ function bundleEntries(bundle: any): any[] {
 	return Array.isArray(bundle?.entry) ? bundle.entry.map((e: any) => e.resource) : [];
 }
 
+// Confirmed live against a real multi-vital encounter (2026-09-18): OpenEMR's FHIR server
+// represents one vitals-form save as a *panel* Observation (LOINC 85353-1) whose `hasMember`
+// references point at ~10 individual child Observations (temp, pulse, resp rate, height,
+// weight, BMI, blood pressure, ...) — not one Observation with everything in `component[]`.
+// The panel itself carries no value of its own (`observationValue()` on it is always 'n/a'),
+// so at `_count=10` it silently occupies a slot that would otherwise hold a real reading —
+// concretely, this dropped blood pressure (last in the hasMember list) from the chart entirely,
+// which the agent then correctly reported as "not available" rather than guessing, but that's
+// masking a real fetch bug, not the intended failure mode. Filtering panels out here (they're
+// pure noise for a flattened chart) and fetching a wider window recovers the real readings.
+export function isPanelObservation(o: any): boolean {
+	return Array.isArray(o.hasMember) && o.hasMember.length > 0;
+}
+
+function quantityText(q: any): string {
+	return `${q.value} ${q.unit ?? ''}`.trim();
+}
+
+// Confirmed live (see ARCHITECTURE.md's known limitations): a component-based panel (e.g. a
+// single blood-pressure Observation with separate systolic/diastolic under `component[]`, no
+// top-level valueQuantity) previously surfaced as "n/a" even though the reading was on file —
+// the agent correctly refused to guess, but that's a real parsing gap, not the intended failure
+// mode. Falls back through valueQuantity -> valueString -> component[] -> 'n/a', in that order.
+export function observationValue(o: any): string {
+	if (o.valueQuantity) return quantityText(o.valueQuantity);
+	if (typeof o.valueString === 'string') return o.valueString;
+	if (Array.isArray(o.component) && o.component.length > 0) {
+		const parts = o.component.map((c: any) => {
+			const label = c.code?.text ?? c.code?.coding?.[0]?.display ?? 'component';
+			const value = c.valueQuantity ? quantityText(c.valueQuantity) : (c.valueString ?? 'n/a');
+			return `${label}: ${value}`;
+		});
+		return parts.join(', ');
+	}
+	return 'n/a';
+}
+
 // Fetches just enough of the chart for a "what's changed / what's on file"
 // summary: demographics, active problems, current meds, recent vitals/labs.
 // Deliberately narrow — this traces to the one use case USERS.md defines for
@@ -52,7 +92,13 @@ export async function fetchPatientChart(env: Env, token: string, patientId: stri
 		// the model (and verification layer) sees it either way.
 		fhirGet(env, token, `/Condition?patient=${patientId}`),
 		fhirGet(env, token, `/MedicationRequest?patient=${patientId}&status=active`),
-		fhirGet(env, token, `/Observation?patient=${patientId}&_sort=-date&_count=10`),
+		// _count=30 (not 10): confirmed live (2026-09-18) that a single vitals-form encounter
+		// produces 1 panel + 15 leaf children (temp, pulse, resp rate, both O2 sat variants,
+		// height, weight, BMI, blood pressure, plus several pediatric-oriented percentile/
+		// weight-for-length rows OpenEMR generates regardless of patient age) — 16 rows for one
+		// visit. 10 wasn't enough to cover one visit's own vitals; 30 leaves headroom for a
+		// second encounter without ballooning the LLM's context on every request.
+		fhirGet(env, token, `/Observation?patient=${patientId}&_sort=-date&_count=30`),
 	]);
 
 	const name = patient?.name?.[0];
@@ -72,10 +118,18 @@ export async function fetchPatientChart(env: Env, token: string, patientId: stri
 			status: m.status ?? 'unknown',
 			authoredOn: m.authoredOn ?? null,
 		})),
-		recentObservations: bundleEntries(observations).map((o: any) => ({
-			text: o.code?.text ?? o.code?.coding?.[0]?.display ?? 'Unspecified observation',
-			value: o.valueQuantity ? `${o.valueQuantity.value} ${o.valueQuantity.unit ?? ''}`.trim() : (o.valueString ?? 'n/a'),
-			effectiveDate: o.effectiveDateTime ?? null,
-		})),
+		recentObservations: bundleEntries(observations)
+			.filter((o: any) => !isPanelObservation(o))
+			// 15, not 10: one encounter's own vitals leaves fill exactly this many slots (see the
+			// comment on the Observation fetch above) — a smaller cap would silently re-introduce
+			// the blood-pressure-dropping bug this fix addresses. Includes some rows that are
+			// pediatric-oriented noise for an adult patient (percentile/weight-for-length); not
+			// filtered further here — that's a separate, not-yet-tackled cleanup, not this bug.
+			.slice(0, 15)
+			.map((o: any) => ({
+				text: o.code?.text ?? o.code?.coding?.[0]?.display ?? 'Unspecified observation',
+				value: observationValue(o),
+				effectiveDate: o.effectiveDateTime ?? null,
+			})),
 	};
 }
