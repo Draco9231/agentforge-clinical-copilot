@@ -58,17 +58,33 @@ Anthropic's API in this project; the "system of record" boundary stays inside Op
   (`admin`/`pass`, MySQL `root`/`root`) are baked into `docker/development-easy` and
   `docker/production` compose files. `docker/deploy/docker-compose.yml` (this project's Railway
   target) requires these as mandatory, unset-by-default environment variables instead.
-- **Finding S-3 (Informational):** OpenEMR's OAuth2 implementation supports a `password` grant
-  that the documentation itself labels "Not considered secure" / "NOT RECOMMENDED for production."
-  Today's Co-Pilot shell uses it anyway (see `ARCHITECTURE.md`'s Known Limitations) because it's
-  the fastest path to a per-user-scoped token for a same-day demo on synthetic data. This is
-  tracked as required follow-up work (`authorization_code` + PKCE / SMART EHR launch), not treated
-  as acceptable long-term.
+- **Finding S-3 (fixed 2026-09-18, was Informational):** OpenEMR's OAuth2 implementation supports
+  a `password` grant that the documentation itself labels "Not considered secure" / "NOT
+  RECOMMENDED for production." The Co-Pilot's physician-facing login now uses
+  `authorization_code` + PKCE against OpenEMR's own login/consent page instead (see
+  `ARCHITECTURE.md`'s Known Limitations #2) — verified live end-to-end. The password grant
+  survives only as a non-interactive test/automation path (`POST /api/login`), documented as
+  such, never the real physician flow.
 - **Finding S-4 (Positive):** OpenEMR's REST/FHIR layer supports granular OAuth scopes
   (`user/Patient.read`, `system/*.read`, `.cruds` fine-grained permissions) and a proper
   `client_credentials` grant with `private_key_jwt` for backend services — the right long-term
   answer for the agent's authentication, once time allows implementing JWKS-based client
   assertions.
+- **Finding S-5 (Medium, insecure-by-default UX in OpenEMR itself, confirmed live 2026-09-18):**
+  Administration → Users → Add User has two separately-set fields that look related but aren't:
+  **Main Menu Role** (which UI menu items a user sees) and a separate **Access Control**
+  multi-select further down the same form (the field that actually governs permissions).
+  Creating a test user with Main Menu Role correctly set to "Front Office" still left it fully
+  privileged — OpenEMR had silently defaulted Access Control to **"Administrators"** rather than
+  requiring an explicit choice, confirmed directly from the DOM
+  (`access_group[]`'s `selectedOptions`). First attempt at this project's own unauthorized-access
+  eval test (`EVAL_DATASET.md`) returned full chart data (200) instead of the expected 401/403,
+  entirely because of this default — not a bug in this project's own authorization design, which
+  correctly denied access (403, logged distinctly from admin's requests) once Access Control was
+  corrected. Recommendation: any OpenEMR account provisioning process (including this project's
+  own future onboarding docs) must explicitly set Access Control, never rely on the form's
+  default, and should spot-check `access_group` in the database or via the API rather than
+  trusting Main Menu Role as a proxy for actual permissions.
 
 ## Performance Audit
 
@@ -79,9 +95,16 @@ Anthropic's API in this project; the "system of record" boundary stays inside Op
 - The agent's own latency budget is dominated by two network hops per request (OpenEMR FHIR
   calls, then the Anthropic API call) — both instrumented per-step in `agent_logs.latency_ms`
   (see `ARCHITECTURE.md`) specifically so this doesn't have to be guessed at.
-- **Not yet verified (requires live deployment):** actual FHIR query latency under OpenEMR's
-  real schema/indexes, baseline CPU/memory under load, and p50/p95/p99 under 10 and 50 concurrent
-  users. Tracked as required follow-up (`AI_COST_ANALYSIS.md` / load-test deliverables).
+- **Verified 2026-09-17/18, against the live deployment:** p50/p95/p99 at 10 and 50 concurrent
+  users (`copilot-agent/scripts/load-test.mjs`; full results and the three real bugs the load
+  test surfaced and fixed are in `copilot-agent/EVAL_DATASET.md`'s Layer 3). Summary: 0 errors at
+  both concurrency levels after fixes, p50 ~9-10s, p95 ~11-13s, p99 ~11-15s. The load test's own
+  honest finding: this latency is dominated by the Claude API call itself and is materially
+  slower than USERS.md's "time to walk to the next room" framing would ideally want — streaming
+  the response is the natural fix, tracked as follow-up, not a same-day patch.
+- **Still not yet verified:** baseline CPU/memory under load (Cloudflare Workers' billing model
+  makes this less load-bearing than it would be on a fixed-capacity host, but not zero) and FHIR
+  query latency specifically isolated from the LLM call's latency.
 
 ## Architecture Audit
 
@@ -99,13 +122,42 @@ Anthropic's API in this project; the "system of record" boundary stays inside Op
 
 ## Data Quality Audit
 
-- **Not yet verified (requires live deployment with sample data):** completeness/consistency of
-  the sample patient data has not been inspected yet — this is first on the list once OpenEMR is
-  live on Railway, since every agent failure mode in the "missing/incomplete record" category
-  depends on knowing what the demo data actually looks like.
-- Structurally, OpenEMR's FHIR resources (`Condition.clinicalStatus`, `MedicationRequest.status`)
-  carry explicit status/lifecycle fields our chart-fetch code filters on (`active` only) — this
-  reduces but does not eliminate stale-data risk (e.g. a condition never marked resolved).
+**Verified 2026-09-18** against four real patients spanning the completeness spectrum a live
+deployment will actually see — not just the one thin record from Day 1. Rationale: this audit's
+whole point is catching "missing fields, inconsistent formatting, duplicate records, and stale
+data" before they become agent failure modes (per this project's own spec), which is impossible
+to actually check against a single patient with one condition and mostly-`n/a` vitals.
+
+| Patient | Design | What it exercises |
+|---|---|---|
+| Maria Alvarez | Original Day-1 demo patient, minimal | Baseline |
+| James Chen | Rich: 2 active conditions, 2 active meds, full vitals (incl. real BP) | Component-based Observations, panel/grouper Observations, a normal "lots of data" visit |
+| Dorothy Lee | Deliberately empty: name + DOB only, nothing else | The true empty-record boundary case, live rather than only unit-tested |
+| Robert Kim | Deliberately stale: one condition resolved in 2019, one medication discontinued in 2019, both with real begin/end dates | Whether "active-only" filtering actually holds up against real inactive/historical records |
+
+**Real finding, not hypothetical:** building James Chen's record surfaced a genuine bug in
+`fetchPatientChart` that no synthetic single-patient test would have caught — OpenEMR's FHIR
+server represents one vitals-form save as a *panel* Observation referencing ~15 child
+Observations (temp, pulse, BP, several pediatric-oriented percentile rows OpenEMR emits
+regardless of patient age), not everything nested under one Observation's `component[]`. At the
+original `_count=10` fetch limit, blood pressure — clinically the single most important vital —
+was silently dropped before the agent ever saw it, and the agent correctly said "not available"
+rather than guessing, which *masked* the bug instead of surfacing it. Full root cause and fix in
+`ARCHITECTURE.md`'s known limitation (5) and `copilot-agent/src/openemr.ts`. This is exactly the
+kind of thing the spec's Data Quality Audit pillar exists to catch — a failure mode invisible in
+a demo with one sparse patient, real the moment a patient has a normal amount of chart data.
+
+**Verified working as designed:**
+- **Empty record (Dorothy Lee):** the agent reports no data across every category (problems,
+  medications, allergies, orders) rather than fabricating a plausible-sounding but false summary.
+- **Stale data (Robert Kim):** the resolved 2019 condition is surfaced with its status honestly
+  labeled "inactive," not presented as current; the discontinued medication is correctly excluded
+  from the active medication list by the existing `status=active` server-side filter
+  (`MedicationRequest?...&status=active` in `openemr.ts`) — confirmed against a real inactive
+  record, not just the filter's presence in code.
+- Conditions are *not* filtered server-side (see the comment in `fetchPatientChart` — OpenEMR's
+  FHIR server doesn't reliably honor `clinical-status=active` there), so a resolved condition
+  does reach the model, but its status is surfaced accurately rather than hidden or mislabeled.
 
 ## Compliance & Regulatory Audit
 
