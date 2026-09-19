@@ -77,6 +77,13 @@ function addMessage(role, text, meta) {
     unc.textContent = "Couldn't answer from chart: " + meta.uncertainAbout.join('; ');
     el.appendChild(unc);
   }
+  if (meta && meta.unfaithfulClaims && meta.unfaithfulClaims.length) {
+    const unfaithful = document.createElement('div');
+    unfaithful.className = 'cite';
+    unfaithful.style.color = '#b00020';
+    unfaithful.textContent = 'Flagged as possibly inaccurate: ' + meta.unfaithfulClaims.join('; ');
+    el.appendChild(unfaithful);
+  }
   document.getElementById('messages').appendChild(el);
 }
 

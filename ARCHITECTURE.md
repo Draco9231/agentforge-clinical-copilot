@@ -36,9 +36,23 @@ point at something real." Citations pointing at fields that don't exist are stri
 response is marked `degraded` rather than shown as fully verified, which the UI surfaces
 directly to the physician rather than hiding.
 
-**Known limitations, stated plainly:** (1) verification checks that a citation exists, not that
-the model's prose is a faithful paraphrase of it — a second LLM-as-judge pass is the natural next
-step. (2) **fixed 2026-09-18:** the password-grant login (a stand-in that meant this Worker saw a
+**Known limitations, stated plainly:** (1) **fixed 2026-09-18:** verification previously only
+checked that a citation's field exists, not that the claim faithfully represents it. A second,
+batched LLM-as-judge pass (`judge.ts`) now checks every surviving citation's claim against its
+actual field value in one follow-up call (not one call per citation, to bound the added latency
+to a single extra round-trip regardless of citation count) and downgrades `verified` to
+`degraded` if any claim is judged unfaithful. Deliberately fails open — a judge-call error leaves
+the existing existence-check result unchanged rather than blocking the response, since the
+existence check remains the safety-critical gate and this is additive to it, not a replacement.
+Verified live: the added step (`verify:judge` in `agent_logs`/Langfuse) runs correctly and adds
+~1.2-1.5s to end-to-end latency (already-elevated p50, see `EVAL_DATASET.md`'s Layer 3 — this
+makes that honest tradeoff slightly worse, not something to pretend away). Could not organically
+trigger a live catch across several real questions — the model's own claims were consistently
+faithful, including correctly declining to call blood pressure "normal" when it was actually
+elevated — so the unfaithful-claim path is proven via `judge.test.ts`'s synthetic case
+(`filterKnownClaims`) plus confirmation that the live mechanism runs end-to-end, not by a live
+example of it actually degrading a response. (2) **fixed 2026-09-18:** the password-grant login
+(a stand-in that meant this Worker saw a
 plaintext password in transit at login) is replaced by `authorization_code` + PKCE for the real
 physician flow — verified live end-to-end via the actual browser UI, including OpenEMR's own
 consent screen listing exactly the scopes requested. Password grant survives only as a
@@ -175,9 +189,16 @@ OpenEMR (Docker Compose: openemr + mariadb), deployed on Railway
   `res.ok` and log the actual error body. Known, dated follow-up: built on Langfuse's legacy v3
   ingestion API, which sunsets 2026-11-16 (past this project's Sunday final deadline, so shipping
   now rather than building OTLP ingestion this close to that deadline was the deliberate call).
-- LLM-as-judge second-pass verification of claim-to-source faithfulness, not just field existence.
-- Unauthorized-patient access test with two distinct real user accounts (needs a human to create
-  the second account — see `EVAL_DATASET.md`'s "Not yet covered").
-- Streaming `/api/chat` responses — the load test's honest finding is that p50 latency (~9-10s)
-  is dominated by the Claude API call and is slower than ideal for the 90-second-window use case;
-  streaming needs its own design since verification currently needs the complete answer first.
+- LLM-as-judge second-pass verification of claim-to-source faithfulness — known limitation #1
+  above. Adds ~1.2-1.5s to end-to-end latency, a real cost against an already-elevated p50 not
+  papered over.
+- Unauthorized-patient access test with two distinct real user accounts — completed
+  2026-09-18, and it surfaced a real insecure-by-default finding in OpenEMR's own Add User form
+  along the way (`AUDIT.md`'s Finding S-5) before the actual 403-denial result was confirmed
+  live. See `EVAL_DATASET.md`.
+
+**Still deferred:**
+- Streaming `/api/chat` responses — the load test's honest finding is that p50 latency (~9-10s,
+  now ~11-12s with the LLM-as-judge pass added) is dominated by the Claude API call and is slower
+  than ideal for the 90-second-window use case; streaming needs its own design since verification
+  currently needs the complete answer first.

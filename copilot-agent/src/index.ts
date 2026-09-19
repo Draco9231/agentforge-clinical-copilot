@@ -2,6 +2,7 @@ import type { Env } from './types';
 import { fetchPatientChart, OpenEmrAuthError } from './openemr';
 import { askAgent } from './agent';
 import { verifyAnswer } from './verify';
+import { judgeFaithfulness } from './judge';
 import { renderChatPage } from './ui';
 import { chatRequestSchema, loginRequestSchema } from './schemas';
 import { buildAuthorizeRedirect, readPkceSession, clearPkceCookie, exchangeCodeForToken } from './oauth';
@@ -280,6 +281,29 @@ location.replace('/');
 				droppedClaims: verification.droppedClaims,
 			});
 
+			// Second-pass faithfulness check (judge.ts) — addresses ARCHITECTURE.md's known
+			// limitation (1): the existence check above only confirms a citation's field exists, not
+			// that the claim is a faithful representation of it. Fails open: a judge-call error never
+			// blocks the response — only the existence check above is the safety-critical gate.
+			// Skipped when there's nothing to judge (no surviving citations).
+			let unfaithfulClaims: string[] = [];
+			let finalStatus = verification.status;
+			if (verification.status !== 'blocked' && answer.citations.length > 0) {
+				const judgeStart = Date.now();
+				try {
+					const judgeResult = await judgeFaithfulness(env, chart, answer);
+					unfaithfulClaims = judgeResult.unfaithfulClaims;
+					await logStep(env, ctx, correlationId, 'verify:judge', 'ok', Date.now() - judgeStart, {
+						unfaithfulCount: unfaithfulClaims.length,
+					});
+					if (unfaithfulClaims.length > 0 && finalStatus === 'verified') {
+						finalStatus = 'degraded';
+					}
+				} catch (e) {
+					await logStep(env, ctx, correlationId, 'verify:judge', 'error', Date.now() - judgeStart, String(e));
+				}
+			}
+
 			try {
 				await env.DB.prepare('INSERT OR IGNORE INTO conversations (id, openemr_user, patient_id) VALUES (?, ?, ?)')
 					.bind(conversationId, 'unknown', payload.patientId)
@@ -290,7 +314,7 @@ location.replace('/');
 					).bind(crypto.randomUUID(), conversationId, correlationId, 'user', payload.message),
 					env.DB.prepare(
 						'INSERT INTO messages (id, conversation_id, correlation_id, role, content, verification_status) VALUES (?, ?, ?, ?, ?, ?)',
-					).bind(crypto.randomUUID(), conversationId, correlationId, 'assistant', answer.summary, verification.status),
+					).bind(crypto.randomUUID(), conversationId, correlationId, 'assistant', answer.summary, finalStatus),
 				]);
 			} catch (e) {
 				await logStep(env, ctx, correlationId, 'persist:messages', 'error', 0, String(e));
@@ -304,8 +328,9 @@ location.replace('/');
 						summary: answer.summary,
 						citations: answer.citations,
 						uncertainAbout: answer.uncertain_about,
-						verificationStatus: verification.status,
+						verificationStatus: finalStatus,
 						droppedClaims: verification.droppedClaims,
+						unfaithfulClaims,
 					}),
 					{ headers: { 'content-type': 'application/json' } },
 				),

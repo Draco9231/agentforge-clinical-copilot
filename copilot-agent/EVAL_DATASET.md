@@ -2,13 +2,10 @@
 
 Three layers: (1) pure-function unit tests for the verification/schema logic — runnable right
 now, no live dependencies; (2) HTTP-level boundary tests against the running Worker; and (3)
-live-deployment tests (ambiguous queries, multi-turn retention, load tests at 10/50 concurrent)
-run against the actual production Worker + OpenEMR on Railway on 2026-09-17/18. A CI-integrated
-version of layer 3 is still follow-up work — see "Not yet covered" below. Unauthorized-patient
-access with two distinct real user accounts is also still pending: it requires creating a second
-OpenEMR user, which needs to be done by a human (Claude does not create accounts or enter
-passwords into forms, including on this project's own admin panel) — see that section for the
-exact steps to unblock it.
+live-deployment tests (ambiguous queries, multi-turn retention, load tests at 10/50 concurrent,
+the LLM-as-judge faithfulness pass, unauthorized-patient access with two real accounts) run
+against the actual production Worker + OpenEMR on Railway across 2026-09-17/18. A CI-integrated
+version of layer 3 is still follow-up work — see "Not yet covered" below.
 
 ## Layer 1: `src/verify.test.ts` and `src/schemas.test.ts` — run with `npm test`
 
@@ -172,6 +169,25 @@ shared elevated credential" design decision in `ARCHITECTURE.md` and `KEY_METRIC
 #5 (authorization denial rate) is actually load-bearing: OpenEMR's own per-user authorization is
 the real enforcement point, and this Worker correctly propagates its denial rather than falling
 back to any other credential.
+
+### LLM-as-judge faithfulness pass, live (2026-09-18)
+
+Addresses `ARCHITECTURE.md`'s known limitation (1): the existing verification (`verify.ts`) only
+confirms a citation's field exists, not that the claim is a faithful representation of it.
+`judge.ts` adds a second, batched pass — one follow-up call judging *all* surviving citations
+together, not one call per citation, to bound the added latency to a single extra round-trip.
+
+**Verified live:** the `verify:judge` step runs correctly end-to-end (confirmed in `agent_logs`
+and Langfuse) and adds ~1.2-1.5s to total request latency — a real, measured cost against the
+already-elevated p50 (~9-10s → ~11-12s), not glossed over. Asked several real questions,
+including a deliberately inference-prone one ("Is his diabetes well controlled and is his blood
+pressure normal?") — the model correctly declined to call an elevated 138/88 reading "normal"
+and correctly refused to judge glycemic control without lab data, so `unfaithfulClaims` was empty
+every time. **Honest limitation:** this means the live path was never observed actually catching
+an unfaithful claim — only that the mechanism runs and the model's own answers were consistently
+faithful. The unfaithful-claim path itself is proven by `judge.test.ts`'s synthetic case
+(`filterKnownClaims` correctly drops a candidate that doesn't match any real citation, and keeps
+one that does), not by a live example of a real degrade.
 
 ## Not yet covered (explicit gaps, not oversights)
 
