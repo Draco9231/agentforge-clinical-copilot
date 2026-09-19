@@ -1,6 +1,7 @@
 import type { AgentAnswer, Env, PatientChart } from './types';
 import { flattenChart } from './verify';
 import { agentAnswerSchema } from './schemas';
+import { sumUsage, type ModelUsage } from './cost';
 
 const SUBMIT_ANSWER_TOOL = {
 	name: 'submit_answer',
@@ -40,12 +41,17 @@ export interface ConversationTurn {
 	content: string;
 }
 
+export interface AskAgentResult {
+	answer: AgentAnswer;
+	usage: ModelUsage;
+}
+
 export async function askAgent(
 	env: Env,
 	chart: PatientChart,
 	question: string,
 	history: ConversationTurn[],
-): Promise<AgentAnswer> {
+): Promise<AskAgentResult> {
 	const fields = flattenChart(chart);
 	const chartBlock = Object.entries(fields)
 		.map(([key, value]) => `- ${key}: ${value}`)
@@ -70,21 +76,42 @@ export async function askAgent(
 	// a re-askable model quirk; if the retry also fails, something is actually wrong and it
 	// should surface as an error rather than retry indefinitely.
 	let lastError: unknown;
+	let usage: ModelUsage = { inputTokens: 0, outputTokens: 0 };
 	for (let attempt = 0; attempt < 2; attempt++) {
 		try {
-			return await callModel(env, system, messages);
+			const result = await callModel(env, system, messages);
+			return { answer: result.answer, usage: sumUsage(usage, result.usage) };
 		} catch (e) {
 			lastError = e;
+			// A failed attempt (e.g. malformed tool call) can still have consumed real, billed
+			// tokens — ModelCallError carries usage precisely so a retried request's true cost
+			// isn't undercounted just because the first attempt didn't produce a usable answer.
+			if (e instanceof ModelCallError) usage = sumUsage(usage, e.usage);
 		}
 	}
-	throw lastError;
+	// Both attempts failed: re-throw with the accumulated usage from both, not just discard it —
+	// a request that costs real tokens and still fails is exactly the case cost tracking must not
+	// silently lose.
+	throw new ModelCallError(lastError instanceof Error ? lastError.message : String(lastError), usage);
+}
+
+// Carries token usage alongside a call failure — found necessary because a failed attempt (e.g.
+// a malformed tool call caught by agentAnswerSchema) can still have consumed real, billed
+// tokens; without this, askAgent's retry path would silently undercount the true cost of a
+// request that needed a retry.
+export class ModelCallError extends Error {
+	usage: ModelUsage;
+	constructor(message: string, usage: ModelUsage) {
+		super(message);
+		this.usage = usage;
+	}
 }
 
 async function callModel(
 	env: Env,
 	system: string,
 	messages: { role: 'user' | 'assistant'; content: string }[],
-): Promise<AgentAnswer> {
+): Promise<{ answer: AgentAnswer; usage: ModelUsage }> {
 	const res = await fetch('https://api.anthropic.com/v1/messages', {
 		method: 'POST',
 		headers: {
@@ -108,20 +135,29 @@ async function callModel(
 
 	if (!res.ok) {
 		const body = await res.text();
-		throw new Error(`Anthropic API error (${res.status}): ${body}`);
+		// No response body to read usage from on an HTTP-level failure.
+		throw new ModelCallError(`Anthropic API error (${res.status}): ${body}`, { inputTokens: 0, outputTokens: 0 });
 	}
 
 	const data = (await res.json()) as any;
+	// Found live (2026-09-18) auditing this project's own observability requirements: Anthropic's
+	// response carries real token usage that was never being read anywhere (see cost.ts). Read it
+	// once here so every failure path below can still report accurate cost via ModelCallError.
+	const usage: ModelUsage = {
+		inputTokens: typeof data.usage?.input_tokens === 'number' ? data.usage.input_tokens : 0,
+		outputTokens: typeof data.usage?.output_tokens === 'number' ? data.usage.output_tokens : 0,
+	};
+
 	const toolUse = data.content?.find((block: any) => block.type === 'tool_use' && block.name === 'submit_answer');
 	if (!toolUse) {
-		throw new Error('Model did not return a submit_answer tool call');
+		throw new ModelCallError('Model did not return a submit_answer tool call', usage);
 	}
 	const parsed = agentAnswerSchema.safeParse(toolUse.input);
 	if (!parsed.success) {
 		// The Anthropic tools API's input_schema is advisory, not enforced on the wire — this
 		// is the actual runtime guarantee that a malformed tool call never reaches verifyAnswer(),
 		// which assumes `citations` is an array and would otherwise throw on `.filter`.
-		throw new Error(`Model's submit_answer call did not match the expected shape: ${parsed.error.message}`);
+		throw new ModelCallError(`Model's submit_answer call did not match the expected shape: ${parsed.error.message}`, usage);
 	}
-	return parsed.data as AgentAnswer;
+	return { answer: parsed.data as AgentAnswer, usage };
 }
