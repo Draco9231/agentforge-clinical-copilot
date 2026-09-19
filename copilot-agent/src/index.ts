@@ -34,6 +34,21 @@ async function logStep(
 	sendLangfuseSpan(env, ctx, { correlationId, step, status, latencyMs, detail });
 }
 
+// The token's `sub` claim is the OpenEMR user's UUID. Decoding it (no signature check needed —
+// OpenEMR already validated the token on every FHIR call this request makes) is enough to
+// attribute conversations to the real physician instead of the placeholder 'unknown' every
+// session used to write, which made cross-session/day history impossible to scope per user.
+function getOpenemrUserId(token: string): string {
+	try {
+		const payload = token.split('.')[1];
+		const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+		const parsed = JSON.parse(json);
+		return typeof parsed.sub === 'string' ? parsed.sub : 'unknown';
+	} catch {
+		return 'unknown';
+	}
+}
+
 function cors(res: Response): Response {
 	const headers = new Headers(res.headers);
 	headers.set('Access-Control-Allow-Origin', '*');
@@ -202,6 +217,33 @@ location.replace('/');
 			return cors(new Response(body, { status: res.status, headers: { 'content-type': 'application/json' } }));
 		}
 
+		// Every message is already persisted per (openemr_user, patient_id) in D1 (see the
+		// /api/chat insert below) — this just reads it back so switching patients, or coming back
+		// tomorrow, shows that patient's prior conversation instead of starting blank each time.
+		if (url.pathname === '/api/history' && request.method === 'GET') {
+			const auth = request.headers.get('Authorization');
+			if (!auth) return cors(new Response(JSON.stringify({ error: 'missing Authorization' }), { status: 401 }));
+			const patientId = url.searchParams.get('patientId');
+			if (!patientId) return cors(new Response(JSON.stringify({ error: 'patientId is required' }), { status: 400 }));
+			const openemrUserId = getOpenemrUserId(auth.replace(/^Bearer\s+/i, ''));
+			try {
+				const result = await env.DB.prepare(
+					`SELECT m.role as role, m.content as content, m.verification_status as verificationStatus, m.created_at as createdAt
+					 FROM messages m
+					 JOIN conversations c ON c.id = m.conversation_id
+					 WHERE c.openemr_user = ? AND c.patient_id = ?
+					 ORDER BY m.created_at ASC`,
+				)
+					.bind(openemrUserId, patientId)
+					.all();
+				return cors(
+					new Response(JSON.stringify({ messages: result.results }), { headers: { 'content-type': 'application/json' } }),
+				);
+			} catch (e) {
+				return cors(new Response(JSON.stringify({ error: 'could not load history' }), { status: 500 }));
+			}
+		}
+
 		if (url.pathname === '/api/chat' && request.method === 'POST') {
 			const correlationId = crypto.randomUUID();
 			const auth = request.headers.get('Authorization');
@@ -324,7 +366,7 @@ location.replace('/');
 
 			try {
 				await env.DB.prepare('INSERT OR IGNORE INTO conversations (id, openemr_user, patient_id) VALUES (?, ?, ?)')
-					.bind(conversationId, 'unknown', payload.patientId)
+					.bind(conversationId, getOpenemrUserId(token), payload.patientId)
 					.run();
 				await env.DB.batch([
 					env.DB.prepare(
