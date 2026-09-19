@@ -67,9 +67,21 @@ async function loadPatients() {
   const select = document.getElementById('patientId');
   try {
     const res = await fetch('/api/patients', { headers: { Authorization: 'Bearer ' + token } });
+    // The OpenEMR access token has a real TTL — a stale token from a prior session (e.g. this
+    // page reloaded after it expired) hits this same code path as a genuinely empty patient
+    // list, and previously both showed the same misleading "No patients found". Distinguish
+    // "your login expired" from "there are truly no patients" instead of collapsing them.
+    if (res.status === 401 || res.status === 403) {
+      sessionExpired();
+      return;
+    }
     const bundle = await res.json();
     const entries = (bundle.entry || []).map(e => e.resource);
-    if (!res.ok || entries.length === 0) {
+    if (!res.ok) {
+      select.innerHTML = '<option value="">Could not load patients (server error)</option>';
+      return;
+    }
+    if (entries.length === 0) {
       select.innerHTML = '<option value="">No patients found</option>';
       return;
     }
@@ -82,6 +94,14 @@ async function loadPatients() {
   } catch (e) {
     select.innerHTML = '<option value="">Could not load patients</option>';
   }
+}
+
+function sessionExpired() {
+  sessionStorage.removeItem('access_token');
+  token = null;
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('login').style.display = 'block';
+  document.getElementById('loginError').textContent = 'Your session expired — please log in again.';
 }
 
 function onPatientChange() {
@@ -135,6 +155,10 @@ async function send() {
     headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + token },
     body: JSON.stringify(requestBody),
   });
+  if (res.status === 401 || res.status === 403) {
+    sessionExpired();
+    return;
+  }
   const body = await res.json();
   if (!res.ok) {
     addMessage('assistant', 'Error: ' + (body.error || 'unknown error') + ' (correlation ' + body.correlationId + ')');
