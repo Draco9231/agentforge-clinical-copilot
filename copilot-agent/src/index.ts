@@ -4,9 +4,12 @@ import { askAgent } from './agent';
 import { verifyAnswer } from './verify';
 import { renderChatPage } from './ui';
 import { chatRequestSchema, loginRequestSchema } from './schemas';
+import { buildAuthorizeRedirect, readPkceSession, clearPkceCookie, exchangeCodeForToken } from './oauth';
+import { sendLangfuseSpan } from './langfuse';
 
 async function logStep(
 	env: Env,
+	ctx: ExecutionContext,
 	correlationId: string,
 	step: string,
 	status: 'ok' | 'error' | 'degraded',
@@ -25,6 +28,8 @@ async function logStep(
 		// Observability must never take the request down with it.
 		console.error(JSON.stringify({ correlationId, step: 'logStep', status: 'error', error: String(e) }));
 	}
+	// Best-effort, non-blocking (see langfuse.ts) — a dashboard outage must never affect this.
+	sendLangfuseSpan(env, ctx, { correlationId, step, status, latencyMs, detail });
 }
 
 function cors(res: Response): Response {
@@ -59,7 +64,7 @@ async function checkReady(env: Env): Promise<{ ready: boolean; checks: Record<st
 }
 
 export default {
-	async fetch(request: Request, env: Env): Promise<Response> {
+	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
 
 		if (request.method === 'OPTIONS') {
@@ -84,12 +89,58 @@ export default {
 			});
 		}
 
-		// Proxies the OAuth2 password-grant login to OpenEMR so the browser never
-		// needs OpenEMR's origin allowed for CORS. Known limitation: this Worker
-		// sees the plaintext password in transit for the moment of login (not
-		// stored, not logged). Documented in ARCHITECTURE.md as a stopgap for
-		// today's demo shell only — production must move to authorization_code
-		// + PKCE so credentials never pass through this service at all.
+		// The physician-facing login flow (fixes ARCHITECTURE.md's known limitation 2, 2026-09-18):
+		// authorization_code + PKCE against OpenEMR's own login page. This Worker never sees a
+		// password — only a short-lived authorization code it exchanges server-side. The PKCE
+		// verifier + CSRF state are carried across the redirect in an HttpOnly cookie (see
+		// oauth.ts) since Workers have no session state between requests.
+		if (url.pathname === '/login' && request.method === 'GET') {
+			const redirectUri = `${url.origin}/callback`;
+			const { location, setCookie } = await buildAuthorizeRedirect(env, redirectUri);
+			return new Response(null, { status: 302, headers: { Location: location, 'Set-Cookie': setCookie } });
+		}
+
+		if (url.pathname === '/callback' && request.method === 'GET') {
+			const correlationId = crypto.randomUUID();
+			const code = url.searchParams.get('code');
+			const returnedState = url.searchParams.get('state');
+			const session = readPkceSession(request.headers.get('Cookie'));
+
+			if (!code || !returnedState || !session) {
+				return new Response('Login session expired or missing. Please try logging in again.', { status: 400 });
+			}
+			if (session.state !== returnedState) {
+				await logStep(env, ctx, correlationId, 'auth:callback', 'error', 0, { reason: 'state_mismatch' });
+				return new Response('Login could not be verified (state mismatch). Please try logging in again.', { status: 400 });
+			}
+
+			const start = Date.now();
+			const redirectUri = `${url.origin}/callback`;
+			const result = await exchangeCodeForToken(env, code, session.codeVerifier, redirectUri);
+			await logStep(env, ctx, correlationId, 'auth:callback', result.ok ? 'ok' : 'error', Date.now() - start, {
+				httpStatus: result.httpStatus,
+			});
+
+			const clearCookieHeaders = { 'Set-Cookie': clearPkceCookie };
+			if (!result.ok || !result.accessToken) {
+				return new Response(`Login failed: ${result.error ?? 'unknown error'}`, { status: 400, headers: clearCookieHeaders });
+			}
+
+			// Hands the token to the browser via a same-origin landing page rather than a URL
+			// fragment redirect, so it never touches server logs or browser history.
+			const html = `<!DOCTYPE html><html><body>Logging in…<script>
+sessionStorage.setItem('access_token', ${JSON.stringify(result.accessToken)});
+location.replace('/');
+</script></body></html>`;
+			return new Response(html, {
+				headers: { 'content-type': 'text/html; charset=utf-8', ...clearCookieHeaders },
+			});
+		}
+
+		// Test/automation escape hatch only (load tests, eval scripts) — NOT the physician-facing
+		// flow anymore, which is /login above. Kept because it lets scripts.load-test.mjs and the
+		// eval suite authenticate non-interactively without a browser redirect round-trip; a real
+		// physician session always goes through authorization_code + PKCE.
 		if (url.pathname === '/api/login' && request.method === 'POST') {
 			const correlationId = crypto.randomUUID();
 			let loginBody: unknown;
@@ -124,7 +175,7 @@ export default {
 					}),
 				});
 				const body = (await tokenRes.json()) as any;
-				await logStep(env, correlationId, 'auth:login', tokenRes.ok ? 'ok' : 'error', Date.now() - start, {
+				await logStep(env, ctx, correlationId, 'auth:login', tokenRes.ok ? 'ok' : 'error', Date.now() - start, {
 					httpStatus: tokenRes.status,
 				});
 				return cors(
@@ -134,7 +185,7 @@ export default {
 					}),
 				);
 			} catch (e) {
-				await logStep(env, correlationId, 'auth:login', 'error', Date.now() - start, String(e));
+				await logStep(env, ctx, correlationId, 'auth:login', 'error', Date.now() - start, String(e));
 				return cors(new Response(JSON.stringify({ error: 'OpenEMR unreachable' }), { status: 502 }));
 			}
 		}
@@ -165,11 +216,15 @@ export default {
 			}
 			const chatParsed = chatRequestSchema.safeParse(chatBody);
 			if (!chatParsed.success) {
+				// "invalid request body", not "patientId and message are required": the latter was
+				// wrong whenever a different field failed (found live 2026-09-18 — conversationId:
+				// null failed here every time, and the old message pointed at the wrong fields
+				// entirely). `details` always carries the actual zod issues; the top-level message
+				// should not overclaim which field is the problem.
 				return cors(
-					new Response(
-						JSON.stringify({ error: 'patientId and message are required', correlationId, details: chatParsed.error.issues }),
-						{ status: 400 },
-					),
+					new Response(JSON.stringify({ error: 'invalid request body', correlationId, details: chatParsed.error.issues }), {
+						status: 400,
+					}),
 				);
 			}
 			const payload = chatParsed.data;
@@ -181,12 +236,12 @@ export default {
 			const fetchStart = Date.now();
 			try {
 				chart = await fetchPatientChart(env, token, payload.patientId);
-				await logStep(env, correlationId, 'tool:get_patient_chart', 'ok', Date.now() - fetchStart, {
+				await logStep(env, ctx, correlationId, 'tool:get_patient_chart', 'ok', Date.now() - fetchStart, {
 					patientId: payload.patientId,
 				});
 			} catch (e) {
 				if (e instanceof OpenEmrAuthError) {
-					await logStep(env, correlationId, 'tool:get_patient_chart', 'error', Date.now() - fetchStart, {
+					await logStep(env, ctx, correlationId, 'tool:get_patient_chart', 'error', Date.now() - fetchStart, {
 						reason: 'auth',
 						httpStatus: e.status,
 					});
@@ -196,7 +251,7 @@ export default {
 						}),
 					);
 				}
-				await logStep(env, correlationId, 'tool:get_patient_chart', 'error', Date.now() - fetchStart, String(e));
+				await logStep(env, ctx, correlationId, 'tool:get_patient_chart', 'error', Date.now() - fetchStart, String(e));
 				return cors(
 					new Response(JSON.stringify({ error: 'Could not retrieve patient chart from OpenEMR', correlationId }), {
 						status: 502,
@@ -208,9 +263,9 @@ export default {
 			let answer;
 			try {
 				answer = await askAgent(env, chart, payload.message, history);
-				await logStep(env, correlationId, 'llm:call', 'ok', Date.now() - llmStart, { citationCount: answer.citations.length });
+				await logStep(env, ctx, correlationId, 'llm:call', 'ok', Date.now() - llmStart, { citationCount: answer.citations.length });
 			} catch (e) {
-				await logStep(env, correlationId, 'llm:call', 'error', Date.now() - llmStart, String(e));
+				await logStep(env, ctx, correlationId, 'llm:call', 'error', Date.now() - llmStart, String(e));
 				return cors(
 					new Response(JSON.stringify({ error: 'The assistant is temporarily unavailable. Please retry.', correlationId }), {
 						status: 502,
@@ -220,7 +275,7 @@ export default {
 
 			const verifyStart = Date.now();
 			const verification = verifyAnswer(answer, chart);
-			await logStep(env, correlationId, 'verify', verification.status === 'blocked' ? 'error' : 'ok', Date.now() - verifyStart, {
+			await logStep(env, ctx, correlationId, 'verify', verification.status === 'blocked' ? 'error' : 'ok', Date.now() - verifyStart, {
 				status: verification.status,
 				droppedClaims: verification.droppedClaims,
 			});
@@ -238,7 +293,7 @@ export default {
 					).bind(crypto.randomUUID(), conversationId, correlationId, 'assistant', answer.summary, verification.status),
 				]);
 			} catch (e) {
-				await logStep(env, correlationId, 'persist:messages', 'error', 0, String(e));
+				await logStep(env, ctx, correlationId, 'persist:messages', 'error', 0, String(e));
 			}
 
 			return cors(

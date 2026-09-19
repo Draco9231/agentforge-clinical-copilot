@@ -28,9 +28,8 @@ export function renderChatPage(openemrBaseUrl: string, apiSite: string): string 
 
 <div id="login">
   <strong>Log in with your OpenEMR account</strong>
-  <input id="username" placeholder="OpenEMR username" />
-  <input id="password" type="password" placeholder="OpenEMR password" />
-  <button onclick="login()">Log in</button>
+  <p class="hint">You'll be taken to OpenEMR's own login page — this app never sees your password.</p>
+  <button onclick="location.href='/login'">Log in with OpenEMR</button>
   <div id="loginError" style="color:#b00020"></div>
 </div>
 
@@ -47,23 +46,16 @@ let token = null;
 let conversationId = null;
 let history = [];
 
-async function login() {
-  const username = document.getElementById('username').value;
-  const password = document.getElementById('password').value;
-  const res = await fetch('/api/login', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username, password }),
-  });
-  const body = await res.json();
-  if (!res.ok) {
-    document.getElementById('loginError').textContent = body.error || 'Login failed';
-    return;
+// The /callback landing page (after OpenEMR's own login) stores the token here and redirects
+// back to '/' — this just needs to notice it's there, not perform the login itself.
+(function initFromSession() {
+  const stored = sessionStorage.getItem('access_token');
+  if (stored) {
+    token = stored;
+    document.getElementById('login').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
   }
-  token = body.access_token;
-  document.getElementById('login').style.display = 'none';
-  document.getElementById('app').style.display = 'block';
-}
+})();
 
 function addMessage(role, text, meta) {
   const el = document.createElement('div');
@@ -95,10 +87,13 @@ async function send() {
   addMessage('user', message);
   document.getElementById('message').value = '';
 
+  const requestBody = { patientId: patientId, message: message };
+  if (conversationId) requestBody.conversationId = conversationId;
+  if (history.length) requestBody.history = history;
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + token },
-    body: JSON.stringify({ patientId, message, conversationId, history }),
+    body: JSON.stringify(requestBody),
   });
   const body = await res.json();
   if (!res.ok) {

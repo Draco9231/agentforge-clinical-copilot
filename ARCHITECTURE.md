@@ -19,8 +19,12 @@ credential of its own for reading patient data. Every request to OpenEMR is made
 physician's *own* OpenEMR OAuth bearer token, forwarded as-is. If a physician isn't allowed to
 see a given patient in OpenEMR, they aren't allowed to see it through the Co-Pilot either —
 OpenEMR's own role/ACL system is the enforcement point, not a reimplementation of it in the
-Worker. Today's shell uses OpenEMR's OAuth2 **password grant** to obtain that token (documented
-below as a known, deliberate shortcut — not something to carry into production).
+Worker. **As of 2026-09-18, the physician-facing login is `authorization_code` + PKCE** against
+OpenEMR's own login/consent page (`/login`, `/callback` in `index.ts`; PKCE machinery in
+`oauth.ts`) — this Worker no longer sees a password at all, only a short-lived authorization code
+it exchanges server-side. The earlier OAuth2 password grant is kept only as a non-interactive
+escape hatch for automated testing (`POST /api/login`, used by `scripts/load-test.mjs` and eval
+curl scripts) — never the real physician flow anymore.
 
 The second major decision is **where verification sits**. The model never states a fact about
 the patient from its own training data — it's given a flattened snapshot of the patient's active
@@ -34,17 +38,43 @@ directly to the physician rather than hiding.
 
 **Known limitations, stated plainly:** (1) verification checks that a citation exists, not that
 the model's prose is a faithful paraphrase of it — a second LLM-as-judge pass is the natural next
-step. (2) the password-grant login is a stand-in for a real `authorization_code` + PKCE flow;
-it currently means this Worker sees a plaintext password in transit at login. (3) there is no
+step. (2) **fixed 2026-09-18:** the password-grant login (a stand-in that meant this Worker saw a
+plaintext password in transit at login) is replaced by `authorization_code` + PKCE for the real
+physician flow — verified live end-to-end via the actual browser UI, including OpenEMR's own
+consent screen listing exactly the scopes requested. Password grant survives only as a
+non-interactive test/automation path, documented as such in `index.ts`. (3) there is no
 clinical rule engine yet (drug interactions, dosage thresholds) — today's agent can tell you
 what's on the chart, not whether it's clinically sound. (4) tool coverage is deliberately narrow
 (Patient/Condition/MedicationRequest/Observation) and traces directly to USERS.md's UC-1–UC-3;
-broader chart access is a later stage, not a bigger fetch bolted on today. (5) confirmed live: the
-Observation mapping reads `valueQuantity` at the top level, so component-based panels (e.g. a
-single blood-pressure Observation with separate systolic/diastolic `component[]` entries) surface
-as "recorded, value n/a" rather than the actual numbers. In a live test this produced exactly the
-intended failure mode — the agent said the reading wasn't available rather than guessing it — but
-the underlying gap (parsing `component[]`) is a real Stage-2 fix, not a feature.
+broader chart access is a later stage, not a bigger fetch bolted on today. (5) **fixed 2026-09-18,
+against a real multi-vital patient (Day 1's fix was necessary but incomplete):** the Observation
+mapping falls through `valueQuantity` → `valueString` → `component[]` (`observationValue()` in
+`openemr.ts`), so a component-based panel like blood pressure surfaces its actual numbers. But
+that alone didn't fix live blood-pressure retrieval, because OpenEMR's FHIR server represents one
+vitals-form save as a *panel* Observation (`hasMember` pointing at ~15 child Observations — temp,
+pulse, height, weight, BP, several pediatric-oriented percentile rows OpenEMR emits regardless of
+patient age), not everything under one Observation's `component[]`. At the original `_count=10`,
+the panel plus higher-priority children filled the whole budget before the fetch ever reached
+blood pressure (last in the list) — it was dropped before `observationValue()` ever ran, not
+mis-parsed by it. Fixed by filtering out panel/grouper Observations (`isPanelObservation()`, they
+carry no value of their own) and raising `_count` to 30 with a 15-item cap after filtering, sized
+to what one real encounter's vitals actually produces. Verified live: asking about a patient with
+elevated, untreated BP correctly surfaced 138/88 and separately flagged "no antihypertensive
+listed" as a genuine clinical uncertainty, rather than fabricating one. Covered by regression
+tests in `openemr.test.ts`. (6) the model
+occasionally omits `citations` from its tool call entirely — non-deterministic, not
+concurrency-specific (see `EVAL_DATASET.md`'s Layer 3). A bounded single retry in `askAgent`
+handles this; if it were to persist across the retry too, that would surface as a 502 rather than
+ever showing an unverified answer. (7) **fixed 2026-09-18, found only by testing the real browser
+UI end-to-end, not by any curl-based test:** `ui.ts` sends a literal `conversationId: null` (not
+an omitted key) on the first message of every conversation, since it initializes
+`let conversationId = null`. `chatRequestSchema`'s `.optional()` only permits `undefined`, so
+every fresh conversation's opening message 400'd in the actual physician-facing UI since the
+schema was introduced — invisible to every prior test because they all omitted the field rather
+than sending `null` explicitly. Fixed both ways: the schema now uses `.nullish()` (accepts
+`null` and `undefined`), and `ui.ts` no longer sends the key at all when there's nothing to send.
+The lesson, stated plainly: strict schemas catch what you test them against, not what the real
+caller actually sends — this is why `run`-testing the live UI, not just the API, is worth doing.
 
 ---
 
@@ -52,10 +82,12 @@ the underlying gap (parsing `component[]`) is a real Stage-2 fix, not a feature.
 
 ```
 Physician's browser
-      │  (logs in with OpenEMR username/password)
+      │  (redirected to OpenEMR's own login + consent page — never enters a password here)
       ▼
 Cloudflare Worker (clinical-copilot-agent)
-  ├─ /api/login   → proxies OAuth2 password grant to OpenEMR, returns bearer token to browser
+  ├─ /login       → redirects to OpenEMR's /authorize with PKCE challenge + state (oauth.ts)
+  ├─ /callback    → exchanges the authorization code server-side, hands token to the browser
+  ├─ /api/login   → OAuth2 password grant — test/automation only, not the physician flow
   ├─ /api/chat    → the agent loop (below)
   ├─ /health /ready
   └─ Cloudflare D1 (conversations, messages, agent_logs)
@@ -106,20 +138,46 @@ OpenEMR (Docker Compose: openemr + mariadb), deployed on Railway
 
 - Matches the user's existing Cloudflare account/infra choice for this project.
 - Correlation-ID-tagged structured logs ship to Cloudflare's built-in observability
-  (`wrangler tail` today; Logpush/dashboard integration is a Stage-2 item) with zero extra
-  infrastructure to run.
+  (`wrangler tail`) and, as of 2026-09-18, to a Langfuse dashboard (`langfuse.ts`) — both with
+  zero extra infrastructure to run.
 - D1 is sufficient for the agent's own state (conversations, logs) — it never needs to be a
   general-purpose relational store, since OpenEMR's MariaDB remains the system of record for
   patient data.
 - Statelessness of the Worker means horizontal scaling under concurrent clinical users (the
   load-test requirement) doesn't require session affinity or shared memory.
 
-## Roadmap (explicitly deferred past today)
+## Roadmap
 
-- Swap password grant for `authorization_code` + PKCE (or SMART EHR launch, since the agent is
-  meant to be embedded *in* OpenEMR) so no credential passes through the Worker.
+**Done 2026-09-17/18 (Days 2–3):**
+- Strict runtime schema validation (zod) for the model's tool output and both POST request
+  bodies — see `schemas.ts` and the PR that introduced it.
+- `Observation.component[]` parsing fix and the deeper panel/grouper-Observation fetch bug it
+  led to (known limitation #5 above) — found and fixed against a real multi-vital patient.
+- Eval suite expanded with live-deployment tests: ambiguous queries, multi-turn context
+  retention, load tests at 10/50 concurrent users with p50/p95/p99 capture — see
+  `EVAL_DATASET.md`'s Layer 3, including three real bugs the load test found and fixed.
+- Data Quality Audit completed against four real patients spanning the completeness spectrum
+  (rich, sparse/empty, stale/inactive) — see `AUDIT.md`.
+- `authorization_code` + PKCE for the physician-facing login, replacing the password-grant
+  stopgap — known limitation #2 above, verified live end-to-end.
+- A real bug in the live chat UI (`conversationId: null` on every fresh conversation's first
+  message, 400ing since the schema was introduced) — known limitation #7 above.
+- 3+ alert definitions — see `copilot-agent/ALERTS.md`.
+- Observability dashboard (Langfuse, HIPAA-region Cloud instance) — `logStep` mirrors every step
+  (correlation ID, status, latency, the same non-PHI detail blob already written to D1) to
+  Langfuse via `langfuse.ts`, fire-and-forget so a dashboard outage can't affect the physician
+  request. Verified live: real request traces confirmed in Langfuse with correct step names,
+  correlation IDs, and latencies matching `agent_logs` exactly. Two real bugs found and fixed
+  getting here, both documented in `langfuse.ts`'s comments: (1) the wrong Langfuse Cloud host
+  was initially assumed — the correct one is a HIPAA-compliant region, not the plain default;
+  (2) the integration's own error handling initially checked only for network failure, not HTTP
+  error responses, which would have let a rejected ingestion "succeed" silently — fixed to check
+  `res.ok` and log the actual error body. Known, dated follow-up: built on Langfuse's legacy v3
+  ingestion API, which sunsets 2026-11-16 (past this project's Sunday final deadline, so shipping
+  now rather than building OTLP ingestion this close to that deadline was the deliberate call).
 - LLM-as-judge second-pass verification of claim-to-source faithfulness, not just field existence.
-- Observability dashboard (Langfuse/Braintrust) wired to the existing correlation IDs.
-- Eval suite covering the boundary/invariant/regression cases required by the engineering
-  requirements (missing data, ambiguous queries, unauthorized access attempts).
-- Load tests at 10/50 concurrent users with p50/p95/p99 capture.
+- Unauthorized-patient access test with two distinct real user accounts (needs a human to create
+  the second account — see `EVAL_DATASET.md`'s "Not yet covered").
+- Streaming `/api/chat` responses — the load test's honest finding is that p50 latency (~9-10s)
+  is dominated by the Claude API call and is slower than ideal for the 90-second-window use case;
+  streaming needs its own design since verification currently needs the complete answer first.

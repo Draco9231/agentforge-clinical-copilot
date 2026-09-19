@@ -5,6 +5,11 @@ export interface Env {
 	OPENEMR_CLIENT_ID: string;
 	OPENEMR_CLIENT_SECRET: string;
 	ANTHROPIC_API_KEY: string;
+	// Optional: dashboard tracing (langfuse.ts). Absent in local dev / before setup —
+	// sendLangfuseSpan no-ops rather than erroring when these aren't set.
+	LANGFUSE_PUBLIC_KEY?: string;
+	LANGFUSE_SECRET_KEY?: string;
+	LANGFUSE_HOST?: string;
 }
 
 export interface PatientChart {

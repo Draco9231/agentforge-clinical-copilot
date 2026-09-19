@@ -17,5 +17,9 @@
 		"OPENEMR_BASE_URL": "https://openemr-production-8057.up.railway.app",
 		"OPENEMR_API_SITE": "default",
 		"OPENEMR_CLIENT_ID": "oh55OixVt2UIygyYPr5dtNUYE9WacNlDYNlqXmeWYOU",
+		// HIPAA-compliant Langfuse Cloud region — deliberate choice matching this project's PHI
+		// stance, not the default (see AUDIT.md's compliance section on treating all providers as
+		// BAA-covered). Not a secret: it's a hostname, not a credential.
+		"LANGFUSE_HOST": "https://hipaa.cloud.langfuse.com",
 	},
 }
