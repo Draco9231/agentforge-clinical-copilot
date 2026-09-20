@@ -141,7 +141,11 @@ async function loadPatients() {
   const listEl = document.getElementById('patientList');
   try {
     const res = await fetch('/api/patients', { headers: { Authorization: 'Bearer ' + token } });
-    if (res.status === 401 || res.status === 403) { sessionExpired(); return; }
+    if (res.status === 401) { sessionExpired(); return; }
+    if (res.status === 403) {
+      listEl.innerHTML = '<div class="empty-hint">Your OpenEMR account is not permitted to view patients.</div>';
+      return;
+    }
     const bundle = await res.json();
     const entries = (bundle.entry || []).map(function (e) { return e.resource; });
     if (!res.ok) {
@@ -333,8 +337,16 @@ async function send() {
       headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + token },
       body: JSON.stringify(requestBody),
     });
-    if (res.status === 401 || res.status === 403) { sessionExpired(); return; }
+    // 401 = the token is no longer valid (re-login). 403 = the token is fine but OpenEMR's own
+    // ACL says this user may not read this chart — a real, expected outcome for restricted roles
+    // (e.g. Front Office), so it stays in the chat as an explicit denial instead of a logout.
+    if (res.status === 401) { sessionExpired(); return; }
     const body = await res.json();
+    if (res.status === 403) {
+      session.messages.push({ role: 'assistant', text: '🔒 Access denied: your OpenEMR account is not authorized to view this patient\\'s chart. (correlation ' + body.correlationId + ')', meta: null, createdAt: null });
+      if (activePatientId === id) renderMessages(id);
+      return;
+    }
     if (!res.ok) {
       session.messages.push({ role: 'assistant', text: 'Error: ' + (body.error || 'unknown error') + ' (correlation ' + body.correlationId + ')', meta: null, createdAt: null });
       if (activePatientId === id) renderMessages(id);
