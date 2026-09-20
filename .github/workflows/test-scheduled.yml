@@ -9,9 +9,7 @@
 name: Test (Scheduled)
 
 on:
-  schedule:
-    # 9:00 UTC = 4:00 AM EST / 5:00 AM EDT
-  - cron: 0 9 * * *
+  # Nightly schedule disabled (was demo-only); run manually via workflow_dispatch.
   workflow_dispatch:
     inputs:
       enable_coverage:
