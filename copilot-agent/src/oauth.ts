@@ -6,8 +6,18 @@ import type { Env } from './types';
 // authorization code it exchanges server-side. PKCE is defense-in-depth on top of the
 // client_secret this confidential client already holds (registered client_secret_post),
 // not a substitute for it — belt and suspenders, not either/or.
-const SCOPES =
-	'openid offline_access api:oemr api:fhir user/Patient.read user/Condition.read user/MedicationRequest.read user/Observation.read';
+// Week 2 additions, each confirmed live (2026-09-23) via a 401/403 with the narrower Week 1
+// scope list: user/document.crs (the standard, non-FHIR /api/patient/:pid/document endpoint —
+// FHIR's own DocumentReference route only exposes a narrow $docref/CCD-generation operation in
+// this fork, not arbitrary file upload — see openemr-documents.ts), user/patient.crus (resolving
+// a patient's FHIR UUID to OpenEMR's internal numeric pid, which that same document endpoint
+// requires), and user/allergy.cruds / user/medication.cruds (writing intake-form-derived
+// allergies/medications back into OpenEMR, Part 2). Registering these on the Week 1 OAuth client
+// wasn't possible — OpenEMR only ever grants a client the scopes it was originally registered
+// with — so this now points at a newly-registered client (see wrangler.jsonc's OPENEMR_CLIENT_ID
+// comment); the Week 1 client is left registered, unused, as a fallback.
+export const SCOPES =
+	'openid offline_access api:oemr api:fhir user/Patient.read user/Condition.read user/MedicationRequest.read user/Observation.read user/document.crs user/patient.crus user/allergy.cruds user/medication.cruds';
 
 const PKCE_COOKIE = 'oauth_pkce';
 

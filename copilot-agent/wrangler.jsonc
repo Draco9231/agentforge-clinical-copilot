@@ -16,7 +16,13 @@
 	"vars": {
 		"OPENEMR_BASE_URL": "https://openemr-production-8057.up.railway.app",
 		"OPENEMR_API_SITE": "default",
-		"OPENEMR_CLIENT_ID": "oh55OixVt2UIygyYPr5dtNUYE9WacNlDYNlqXmeWYOU",
+		// Week 2 (2026-09-23): switched from the Week 1 client to a new one registered with the
+		// added standard-API scopes attach_and_extract needs (user/document.crs, user/patient.crus,
+		// user/allergy.cruds, user/medication.cruds) — OpenEMR's OAuth clients only ever grant the
+		// scopes they were registered with, so the Week 1 client could not simply be re-scoped.
+		// The Week 1 client (oh55OixVt2UIygyYPr5dtNUYE9WacNlDYNlqXmeWYOU) is left registered and
+		// enabled, unused, as a fallback.
+		"OPENEMR_CLIENT_ID": "ig3qZSk2VTKVrh9gTxNeVWylpNhv9JFmmijpehc5Ikc",
 		// HIPAA-compliant Langfuse Cloud region — deliberate choice matching this project's PHI
 		// stance, not the default (see AUDIT.md's compliance section on treating all providers as
 		// BAA-covered). Not a secret: it's a hostname, not a credential.

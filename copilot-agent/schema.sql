@@ -35,3 +35,38 @@ CREATE TABLE IF NOT EXISTS agent_logs (
 
 CREATE INDEX IF NOT EXISTS idx_agent_logs_correlation ON agent_logs(correlation_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+
+-- Week 2 (multimodal evidence agent): this is the source of truth for "was this document
+-- ingested and what came of it" — deliberately not OpenEMR, because OpenEMR's own document
+-- read API cannot reliably confirm what it stored in this fork (see openemr-documents.ts for
+-- the traced bug). openemr_upload_ok records whether the best-effort OpenEMR write succeeded,
+-- purely informational — nothing downstream depends on it.
+CREATE TABLE IF NOT EXISTS documents (
+  id TEXT PRIMARY KEY,
+  patient_id TEXT NOT NULL,
+  openemr_user TEXT NOT NULL,
+  doc_type TEXT NOT NULL CHECK (doc_type IN ('lab_pdf', 'intake_form')),
+  file_name TEXT NOT NULL,
+  openemr_upload_ok INTEGER NOT NULL DEFAULT 0,
+  extraction_confidence TEXT CHECK (extraction_confidence IN ('high', 'medium', 'low')),
+  correlation_id TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- One row per extracted, cited fact — the citation contract (source_type, source_id,
+-- page_or_section, field_or_chunk_id, quote_or_value) stored exactly as the model produced it,
+-- so a UI can show "click to source" without re-deriving anything.
+CREATE TABLE IF NOT EXISTS document_facts (
+  id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL REFERENCES documents(id),
+  fact_json TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  page_or_section TEXT NOT NULL,
+  field_or_chunk_id TEXT NOT NULL,
+  quote_or_value TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_documents_patient ON documents(patient_id);
+CREATE INDEX IF NOT EXISTS idx_document_facts_document ON document_facts(document_id);

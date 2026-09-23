@@ -54,6 +54,41 @@ export const loginRequestSchema = z.object({
 	password: z.string().min(1),
 });
 
+// Week 2 citation contract (W2 PRD, "Citation contract"): every extracted clinical fact must
+// carry machine-readable provenance, not just a prose citation like Week 1's `source_field`.
+// source_id is our own D1 document id (see documents.ts) — never OpenEMR's, since OpenEMR's own
+// document-read API cannot reliably confirm what it stored (see openemr-documents.ts).
+export const citationSchema = z.object({
+	source_type: z.enum(['lab_pdf', 'intake_form']),
+	source_id: z.string(),
+	page_or_section: z.string(),
+	field_or_chunk_id: z.string(),
+	quote_or_value: z.string(),
+});
+
+// Required lab fields per the W2 PRD: test name, value, unit, reference range, collection date,
+// abnormal flag, source citation. unit/reference_range/collection_date are nullish because a
+// real scanned lab PDF frequently omits one of these per-row — treating them as required would
+// force the model to invent a value rather than leave it genuinely absent.
+export const labResultSchema = z.object({
+	test_name: z.string(),
+	value: z.string(),
+	unit: z.string().nullish(),
+	reference_range: z.string().nullish(),
+	collection_date: z.string().nullish(),
+	abnormal_flag: z.enum(['normal', 'high', 'low', 'critical', 'unknown']),
+	citation: citationSchema,
+});
+
+export const labPdfExtractionSchema = z.object({
+	results: z.array(labResultSchema),
+	// Surfaces the "vision extraction without invention" concern from the W2 PRD directly in the
+	// schema rather than leaving it implicit — a low-confidence extraction should be visibly
+	// flagged to the physician, not silently presented with the same weight as a clean one.
+	extraction_confidence: z.enum(['high', 'medium', 'low']),
+	unparsed_notes: z.array(z.string()).optional().default([]),
+});
+
 // judge.ts's second-pass faithfulness check tool output. Same reasoning as agentAnswerSchema:
 // the Anthropic tools API's input_schema is advisory, not enforced on the wire, and this result
 // feeds directly into what verification status gets shown to a physician — it needs the same

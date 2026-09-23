@@ -6,8 +6,10 @@ import { judgeFaithfulness } from './judge';
 import { estimateCostUsd } from './cost';
 import { renderChatPage } from './ui';
 import { chatRequestSchema, loginRequestSchema } from './schemas';
-import { buildAuthorizeRedirect, readPkceSession, clearPkceCookie, exchangeCodeForToken } from './oauth';
+import { buildAuthorizeRedirect, readPkceSession, clearPkceCookie, exchangeCodeForToken, SCOPES } from './oauth';
 import { sendLangfuseSpan } from './langfuse';
+import { extractLabPdf, ExtractionError } from './extraction';
+import { resolveNumericPid, uploadDocumentToOpenEmr } from './openemr-documents';
 
 async function logStep(
 	env: Env,
@@ -47,6 +49,18 @@ function getOpenemrUserId(token: string): string {
 	} catch {
 		return 'unknown';
 	}
+}
+
+// String.fromCharCode(...bytes) blows the call stack on a real multi-page PDF (tens of KB+) —
+// chunking avoids spreading a large typed array into a single function call.
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+	const bytes = new Uint8Array(buf);
+	let binary = '';
+	const chunkSize = 8192;
+	for (let i = 0; i < bytes.length; i += chunkSize) {
+		binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+	}
+	return btoa(binary);
 }
 
 function cors(res: Response): Response {
@@ -185,7 +199,7 @@ location.replace('/');
 					body: new URLSearchParams({
 						grant_type: 'password',
 						client_id: env.OPENEMR_CLIENT_ID,
-						scope: 'openid offline_access api:oemr api:fhir user/Patient.read user/Condition.read user/MedicationRequest.read user/Observation.read',
+						scope: SCOPES,
 						user_role: 'users',
 						username,
 						password,
@@ -215,6 +229,127 @@ location.replace('/');
 			});
 			const body = await res.text();
 			return cors(new Response(body, { status: res.status, headers: { 'content-type': 'application/json' } }));
+		}
+
+		// Week 2: attach_and_extract. Accepts a lab PDF, extracts structured cited facts via
+		// Claude's native PDF+citations support, best-effort stores the source in OpenEMR (see
+		// openemr-documents.ts for why that write can't be verified read back), and persists the
+		// extraction — our own D1 documents/document_facts tables, not OpenEMR — as the durable
+		// record citations point at.
+		if (url.pathname === '/api/documents/attach_and_extract' && request.method === 'POST') {
+			const correlationId = crypto.randomUUID();
+			const auth = request.headers.get('Authorization');
+			if (!auth) return cors(new Response(JSON.stringify({ error: 'missing Authorization', correlationId }), { status: 401 }));
+			const token = auth.replace(/^Bearer\s+/i, '');
+
+			let form: FormData;
+			try {
+				form = await request.formData();
+			} catch {
+				return cors(new Response(JSON.stringify({ error: 'expected multipart/form-data', correlationId }), { status: 400 }));
+			}
+			const patientId = form.get('patientId');
+			const docType = form.get('doc_type');
+			const file = form.get('file');
+			if (typeof patientId !== 'string' || !patientId) {
+				return cors(new Response(JSON.stringify({ error: 'patientId is required', correlationId }), { status: 400 }));
+			}
+			if (docType !== 'lab_pdf') {
+				// intake_form is Part 2 scope — refusing explicitly here is more honest than a
+				// silent no-op or a misleading 200 for a doc_type this endpoint doesn't handle yet.
+				return cors(
+					new Response(JSON.stringify({ error: 'only doc_type "lab_pdf" is supported so far', correlationId }), { status: 400 }),
+				);
+			}
+			if (!(file instanceof File)) {
+				return cors(new Response(JSON.stringify({ error: 'file is required', correlationId }), { status: 400 }));
+			}
+
+			const documentId = crypto.randomUUID();
+			const fileBytes = await file.arrayBuffer();
+			const openemrUserId = getOpenemrUserId(token);
+
+			const extractStart = Date.now();
+			let extraction;
+			let usage;
+			try {
+				const result = await extractLabPdf(env, arrayBufferToBase64(fileBytes), documentId);
+				extraction = result.extraction;
+				usage = result.usage;
+				await logStep(env, ctx, correlationId, 'extract:lab_pdf', 'ok', Date.now() - extractStart, {
+					resultCount: extraction.results.length,
+					extractionConfidence: extraction.extraction_confidence,
+					inputTokens: usage.inputTokens,
+					outputTokens: usage.outputTokens,
+					estimatedCostUsd: estimateCostUsd(usage),
+				});
+			} catch (e) {
+				const errUsage = e instanceof ExtractionError ? e.usage : { inputTokens: 0, outputTokens: 0 };
+				await logStep(env, ctx, correlationId, 'extract:lab_pdf', 'error', Date.now() - extractStart, {
+					error: String(e),
+					inputTokens: errUsage.inputTokens,
+					outputTokens: errUsage.outputTokens,
+					estimatedCostUsd: estimateCostUsd(errUsage),
+				});
+				return cors(
+					new Response(JSON.stringify({ error: 'Could not extract structured data from this document', correlationId }), {
+						status: 502,
+					}),
+				);
+			}
+
+			// Best-effort against OpenEMR — see openemr-documents.ts's documented bug. Failure here
+			// never blocks the response: the extraction (this Worker's own D1 record) is the
+			// durable result regardless of whether OpenEMR's copy round-tripped.
+			const uploadStart = Date.now();
+			const numericPid = await resolveNumericPid(env, token, patientId);
+			let openemrUploadOk = false;
+			if (numericPid !== null) {
+				const uploadResult = await uploadDocumentToOpenEmr(env, token, numericPid, fileBytes, file.name, 'labreports');
+				openemrUploadOk = uploadResult.uploaded;
+				await logStep(env, ctx, correlationId, 'upload:openemr_document', uploadResult.uploaded ? 'ok' : 'error', Date.now() - uploadStart, {
+					numericPid,
+					error: uploadResult.error,
+				});
+			} else {
+				await logStep(env, ctx, correlationId, 'upload:openemr_document', 'error', Date.now() - uploadStart, {
+					reason: 'could not resolve numeric pid for patient uuid',
+				});
+			}
+
+			try {
+				await env.DB.prepare(
+					'INSERT INTO documents (id, patient_id, openemr_user, doc_type, file_name, openemr_upload_ok, extraction_confidence, correlation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+				)
+					.bind(documentId, patientId, openemrUserId, 'lab_pdf', file.name, openemrUploadOk ? 1 : 0, extraction.extraction_confidence, correlationId)
+					.run();
+				if (extraction.results.length > 0) {
+					await env.DB.batch(
+						extraction.results.map((r) =>
+							env.DB.prepare(
+								'INSERT INTO document_facts (id, document_id, fact_json, source_type, source_id, page_or_section, field_or_chunk_id, quote_or_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+							).bind(
+								crypto.randomUUID(),
+								documentId,
+								JSON.stringify(r),
+								r.citation.source_type,
+								r.citation.source_id,
+								r.citation.page_or_section,
+								r.citation.field_or_chunk_id,
+								r.citation.quote_or_value,
+							),
+						),
+					);
+				}
+			} catch (e) {
+				await logStep(env, ctx, correlationId, 'persist:document', 'error', 0, String(e));
+			}
+
+			return cors(
+				new Response(JSON.stringify({ documentId, correlationId, openemrUploadOk, ...extraction }), {
+					headers: { 'content-type': 'application/json' },
+				}),
+			);
 		}
 
 		// Every message is already persisted per (openemr_user, patient_id) in D1 (see the
