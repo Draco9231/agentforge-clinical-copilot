@@ -56,6 +56,22 @@ export function renderChatPage(openemrBaseUrl: string, apiSite: string): string 
   .composer textarea { flex: 1; resize: none; padding: 0.55rem; border: 1px solid #ddd; border-radius: 6px; }
   .composer button { align-self: flex-end; }
 
+  .doc-upload { display: flex; align-items: center; gap: 0.5rem; padding: 0.6rem 1rem; border-bottom: 1px solid #eee; background: #fafbfe; }
+  .doc-upload input[type=file] { flex: 1; font-size: 0.8rem; }
+  .doc-upload button { flex-shrink: 0; }
+  .upload-status { font-size: 0.78rem; color: #777; }
+
+  .msg.document { background: #fff; border: 1px solid #e3e3ea; max-width: 100%; padding: 0.8rem 1rem; }
+  .doc-card-title { font-weight: 600; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .badge.high { background: #d6f5dd; color: #146c2e; }
+  .badge.medium { background: #fff3cd; color: #8a6300; }
+  .badge.low { background: #fde2e2; color: #a01818; }
+  .doc-fact { display: flex; justify-content: space-between; gap: 0.6rem; padding: 0.35rem 0; border-bottom: 1px dashed #eee; font-size: 0.85rem; }
+  .doc-fact:last-child { border-bottom: none; }
+  .doc-fact-value.flag-high, .doc-fact-value.flag-low, .doc-fact-value.flag-critical { color: #b00020; font-weight: 600; }
+  .doc-fact-value.flag-normal { color: #146c2e; }
+  .doc-fact-cite { font-size: 0.72rem; color: #999; }
+
   @media (max-width: 720px) {
     #app { flex-direction: column; height: auto; }
     .sidebar { width: 100%; max-height: 220px; }
@@ -86,6 +102,11 @@ export function renderChatPage(openemrBaseUrl: string, apiSite: string): string 
   </aside>
   <section class="chat-pane">
     <div id="chatHeader" class="chat-header"></div>
+    <div class="doc-upload">
+      <input type="file" id="labPdfInput" accept="application/pdf" />
+      <button id="uploadBtn" onclick="uploadLabPdf()">Upload Lab PDF</button>
+      <span id="uploadStatus" class="upload-status"></span>
+    </div>
     <div id="messages" class="messages"></div>
     <div class="composer">
       <textarea id="message" rows="2" placeholder="Ask about this patient's meds, conditions, recent labs..." onkeydown="handleComposerKey(event)"></textarea>
@@ -278,7 +299,76 @@ function renderMessages(id) {
   container.scrollTop = container.scrollHeight;
 }
 
+// Week 2: upload a lab PDF for the active patient and show its extracted, cited results inline
+// in the chat as a distinct card — not folded into a chat bubble, since this is structured
+// extraction output, not a conversational answer.
+async function uploadLabPdf() {
+  const id = activePatientId;
+  if (!id) return;
+  const input = document.getElementById('labPdfInput');
+  const file = input.files[0];
+  const statusEl = document.getElementById('uploadStatus');
+  if (!file) { statusEl.textContent = 'Choose a PDF first.'; return; }
+
+  const btn = document.getElementById('uploadBtn');
+  btn.disabled = true;
+  statusEl.textContent = 'Extracting…';
+  try {
+    const form = new FormData();
+    form.append('patientId', id);
+    form.append('doc_type', 'lab_pdf');
+    form.append('file', file);
+    const res = await fetch('/api/documents/attach_and_extract', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token },
+      body: form,
+    });
+    if (res.status === 401) { sessionExpired(); return; }
+    const body = await res.json();
+    if (!res.ok) {
+      statusEl.textContent = 'Error: ' + (body.error || 'unknown error');
+      return;
+    }
+    statusEl.textContent = '';
+    input.value = '';
+    const session = sessions[id];
+    session.messages.push({ role: 'document', text: file.name, meta: body, createdAt: null });
+    if (activePatientId === id) renderMessages(id);
+  } catch (e) {
+    statusEl.textContent = 'Upload failed.';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderDocumentCard(container, fileName, meta) {
+  const el = document.createElement('div');
+  el.className = 'msg document';
+  const confidence = meta.extraction_confidence || 'low';
+  const storedNote = meta.openemrUploadOk
+    ? '&#10003; stored in OpenEMR'
+    : '&#9888; could not confirm OpenEMR storage (see chat)';
+  let html = '<div class="doc-card-title">&#128196; ' + fileName +
+    ' <span class="badge ' + confidence + '">' + confidence + ' confidence</span></div>' +
+    '<div class="hint" style="margin:0.3rem 0 0.6rem">' + storedNote + '</div>';
+  (meta.results || []).forEach(function (r) {
+    const flagClass = 'flag-' + (r.abnormal_flag || 'unknown');
+    const valueText = r.value + (r.unit ? ' ' + r.unit : '') + (r.reference_range ? ' (ref ' + r.reference_range + ')' : '');
+    html += '<div class="doc-fact">' +
+      '<div>' + r.test_name + (r.collection_date ? '<div class="doc-fact-cite">' + r.collection_date + '</div>' : '') + '</div>' +
+      '<div class="doc-fact-value ' + flagClass + '">' + valueText +
+        '<div class="doc-fact-cite">p.' + r.citation.page_or_section + ': &ldquo;' + r.citation.quote_or_value + '&rdquo;</div>' +
+      '</div></div>';
+  });
+  if (meta.unparsed_notes && meta.unparsed_notes.length) {
+    html += '<div class="cite" style="margin-top:0.5rem">Not extracted: ' + meta.unparsed_notes.join('; ') + '</div>';
+  }
+  el.innerHTML = html;
+  container.appendChild(el);
+}
+
 function addMessageEl(container, role, text, meta) {
+  if (role === 'document') { renderDocumentCard(container, text, meta); return; }
   const el = document.createElement('div');
   el.className = 'msg ' + role;
   let html = text;
