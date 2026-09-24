@@ -268,6 +268,13 @@ async function loadHistory(id) {
   }
 }
 
+// Same "YYYY-MM-DD HH:MM:SS" UTC shape D1 stores (datetime('now')), so live messages and messages
+// reloaded from history group under the same day dividers. Without this, anything created after
+// page load had no timestamp and silently appeared under the previous day's divider.
+function nowStamp() {
+  return new Date().toISOString().replace('T', ' ').slice(0, 19);
+}
+
 function dayLabel(createdAt) {
   const d = new Date(createdAt.replace(' ', 'T') + 'Z');
   const now = new Date();
@@ -332,7 +339,7 @@ async function uploadLabPdf() {
     statusEl.textContent = '';
     input.value = '';
     const session = sessions[id];
-    session.messages.push({ role: 'document', text: file.name, meta: body, createdAt: null });
+    session.messages.push({ role: 'document', text: file.name, meta: body, createdAt: nowStamp() });
     if (activePatientId === id) renderMessages(id);
   } catch (e) {
     statusEl.textContent = 'Upload failed.';
@@ -412,7 +419,7 @@ async function send() {
   if (!message) return;
   const session = sessions[id];
   document.getElementById('message').value = '';
-  session.messages.push({ role: 'user', text: message, meta: null, createdAt: null });
+  session.messages.push({ role: 'user', text: message, meta: null, createdAt: nowStamp() });
   if (activePatientId === id) renderMessages(id);
 
   const btn = document.getElementById('askBtn');
@@ -433,19 +440,19 @@ async function send() {
     if (res.status === 401) { sessionExpired(); return; }
     const body = await res.json();
     if (res.status === 403) {
-      session.messages.push({ role: 'assistant', text: '🔒 Access denied: your OpenEMR account is not authorized to view this patient\\'s chart. (correlation ' + body.correlationId + ')', meta: null, createdAt: null });
+      session.messages.push({ role: 'assistant', text: '🔒 Access denied: your OpenEMR account is not authorized to view this patient\\'s chart. (correlation ' + body.correlationId + ')', meta: null, createdAt: nowStamp() });
       if (activePatientId === id) renderMessages(id);
       return;
     }
     if (!res.ok) {
-      session.messages.push({ role: 'assistant', text: 'Error: ' + (body.error || 'unknown error') + ' (correlation ' + body.correlationId + ')', meta: null, createdAt: null });
+      session.messages.push({ role: 'assistant', text: 'Error: ' + (body.error || 'unknown error') + ' (correlation ' + body.correlationId + ')', meta: null, createdAt: nowStamp() });
       if (activePatientId === id) renderMessages(id);
       return;
     }
     session.conversationId = body.conversationId;
     session.history.push({ role: 'user', content: message });
     session.history.push({ role: 'assistant', content: body.summary });
-    session.messages.push({ role: 'assistant', text: body.summary, meta: body, createdAt: null });
+    session.messages.push({ role: 'assistant', text: body.summary, meta: body, createdAt: nowStamp() });
     if (activePatientId === id) renderMessages(id);
   } finally {
     btn.disabled = false; textarea.disabled = false;

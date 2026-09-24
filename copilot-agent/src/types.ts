@@ -19,6 +19,10 @@ export interface PatientChart {
 	conditions: { text: string; status: string; recordedDate: string | null }[];
 	medications: { text: string; status: string; authoredOn: string | null }[];
 	recentObservations: { text: string; value: string; effectiveDate: string | null }[];
+	// Week 2: facts extracted from uploaded documents (D1 document_facts), kept separate from
+	// OpenEMR-sourced fields so the answer can distinguish "in the chart" from "from an uploaded
+	// document". Optional so Week 1 code paths and tests are unaffected.
+	documentFacts?: { text: string; source: string }[];
 }
 
 export interface Citation {

@@ -16,6 +16,9 @@ export function flattenChart(chart: PatientChart): Record<string, string> {
 	chart.recentObservations.forEach((o, i) => {
 		fields[`recentObservations[${i}]`] = `${o.text}: ${o.value} (${o.effectiveDate ?? 'unknown date'})`;
 	});
+	(chart.documentFacts ?? []).forEach((f, i) => {
+		fields[`documentFacts[${i}]`] = `${f.text} [source: ${f.source}]`;
+	});
 	return fields;
 }
 
