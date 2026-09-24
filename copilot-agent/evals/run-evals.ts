@@ -13,9 +13,11 @@ import { dirname, join } from 'node:path';
 import { labPdfExtractionSchema, agentAnswerSchema, chatRequestSchema } from '../src/schemas.ts';
 import { verifyAnswer, flattenChart } from '../src/verify.ts';
 import { sanitizeLogDetail } from '../src/logging.ts';
+import { decideNext } from '../src/graph/routing.ts';
+import { dedupeFacts } from '../src/document-facts.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const CATEGORIES = ['schema_valid', 'citation_present', 'factually_consistent', 'safe_refusal', 'no_phi_in_logs'] as const;
+const CATEGORIES = ['schema_valid', 'citation_present', 'factually_consistent', 'safe_refusal', 'no_phi_in_logs', 'routing_explainable'] as const;
 const PASS_THRESHOLD = 0.95;
 const MAX_REGRESSION = 0.05;
 
@@ -86,6 +88,22 @@ function runCase(c: any): { pass: boolean; detail: string } {
 				if (longest > c.maxStringLength) problems.push(`string of ${longest} chars survived (max ${c.maxStringLength})`);
 			}
 			return { pass: problems.length === 0, detail: problems.join('; ') || 'ok' };
+		}
+		case 'route': {
+			const d = decideNext({ question: c.question, documentCount: c.documentCount ?? undefined, docsDone: c.docsDone, evidenceDone: c.evidenceDone });
+			const problems: string[] = [];
+			if (d.next !== c.expectNext) problems.push(`routed to ${d.next}, expected ${c.expectNext}`);
+			if (!d.reason) problems.push('empty reason (handoffs must be explainable)');
+			for (const w of c.reasonMustExclude ?? []) if (d.reason.includes(w)) problems.push(`reason leaks "${w}"`);
+			return { pass: problems.length === 0, detail: problems.join('; ') || 'ok' };
+		}
+		case 'dedupe': {
+			const rows = c.rows.map(([name, value, date]: string[]) => ({
+				fact_json: JSON.stringify({ test_name: name, value, collection_date: date, abnormal_flag: 'unknown', citation: { source_type: 'lab_pdf', page_or_section: '1' } }),
+				file_name: 'f.pdf',
+			}));
+			const n = dedupeFacts(rows).length;
+			return { pass: n === c.expectCount, detail: n === c.expectCount ? 'ok' : `got ${n}, expected ${c.expectCount}` };
 		}
 		default:
 			return { pass: false, detail: `unknown case kind ${c.kind}` };

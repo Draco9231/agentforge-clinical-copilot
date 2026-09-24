@@ -4,7 +4,8 @@
     "citation_present": 1,
     "factually_consistent": 1,
     "safe_refusal": 1,
-    "no_phi_in_logs": 1
+    "no_phi_in_logs": 1,
+    "routing_explainable": 1
   },
   "results": [
     {
@@ -216,6 +217,76 @@
       "pass": true,
       "detail": "ok",
       "guards": "patient names leaking through uploaded file names"
+    },
+    {
+      "id": "T1",
+      "category": "routing_explainable",
+      "pass": true,
+      "detail": "ok",
+      "guards": "uploaded documents being ignored when the patient has them"
+    },
+    {
+      "id": "T2",
+      "category": "routing_explainable",
+      "pass": true,
+      "detail": "ok",
+      "guards": "needless worker hops for a patient with no documents"
+    },
+    {
+      "id": "T3",
+      "category": "routing_explainable",
+      "pass": true,
+      "detail": "ok",
+      "guards": "guidance questions answered without guideline evidence"
+    },
+    {
+      "id": "T4",
+      "category": "routing_explainable",
+      "pass": true,
+      "detail": "ok",
+      "guards": "routing loops that never reach the final answer"
+    },
+    {
+      "id": "T5",
+      "category": "routing_explainable",
+      "pass": true,
+      "detail": "ok",
+      "guards": "an unknown document count being treated as 'has documents'"
+    },
+    {
+      "id": "T6",
+      "category": "routing_explainable",
+      "pass": true,
+      "detail": "ok",
+      "guards": "evidence retrieval running before document facts are loaded"
+    },
+    {
+      "id": "T7",
+      "category": "routing_explainable",
+      "pass": true,
+      "detail": "ok",
+      "guards": "plain recall questions paying retrieval latency for nothing"
+    },
+    {
+      "id": "T8",
+      "category": "routing_explainable",
+      "pass": true,
+      "detail": "ok",
+      "guards": "handoff reasons echoing question/patient text into logs"
+    },
+    {
+      "id": "D1",
+      "category": "factually_consistent",
+      "pass": true,
+      "detail": "ok",
+      "guards": "re-uploaded reports tripling identical facts in the model's context (seen live: 21 lines from 3 uploads)"
+    },
+    {
+      "id": "D2",
+      "category": "factually_consistent",
+      "pass": true,
+      "detail": "ok",
+      "guards": "dedupe collapsing a real trend (same test, different dates) into one value"
     }
   ]
 }

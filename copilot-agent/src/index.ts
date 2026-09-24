@@ -10,6 +10,9 @@ import { buildAuthorizeRedirect, readPkceSession, clearPkceCookie, exchangeCodeF
 import { sendLangfuseSpan } from './langfuse';
 import { extractLabPdf, ExtractionError } from './extraction';
 import { sanitizeLogDetail } from './logging';
+import { runAgentGraph } from './graph/graph';
+import type { Handoff } from './graph/routing';
+import { loadDocumentFacts, countDocuments } from './document-facts';
 import { resolveNumericPid, uploadDocumentToOpenEmr } from './openemr-documents';
 
 async function logStep(
@@ -440,54 +443,40 @@ location.replace('/');
 				);
 			}
 
-			// Week 2: fold facts extracted from uploaded documents into the chart the model reads and
-			// the verifier checks. Runs only after fetchPatientChart succeeded, so OpenEMR's own
-			// authorization has already been enforced for this user and patient — a restricted user
-			// never reaches this query. Newest document first, deduped by test+date so re-uploading
-			// the same report doesn't multiply identical facts in the prompt. Best-effort: a D1
-			// failure degrades to the Week 1 behavior rather than failing the whole question.
-			const docStart = Date.now();
-			try {
-				const rows = await env.DB.prepare(
-					`SELECT f.fact_json AS fact_json, d.file_name AS file_name
-					 FROM document_facts f JOIN documents d ON d.id = f.document_id
-					 WHERE d.patient_id = ? ORDER BY d.created_at DESC, f.rowid ASC LIMIT 200`,
-				)
-					.bind(payload.patientId)
-					.all<{ fact_json: string; file_name: string }>();
-				const seen = new Set<string>();
-				const facts: { text: string; source: string }[] = [];
-				for (const row of rows.results ?? []) {
-					const r = JSON.parse(row.fact_json);
-					const key = `${r.test_name}|${r.collection_date ?? ''}`;
-					if (seen.has(key)) continue;
-					seen.add(key);
-					const detail = [
-						r.unit ? `${r.value} ${r.unit}` : r.value,
-						r.reference_range ? `ref ${r.reference_range}` : null,
-						`flag ${r.abnormal_flag}`,
-						r.collection_date ? `collected ${r.collection_date}` : null,
-					]
-						.filter(Boolean)
-						.join(', ');
-					facts.push({ text: `${r.test_name}: ${detail}`, source: `uploaded ${r.citation.source_type} "${row.file_name}" p.${r.citation.page_or_section}` });
-				}
-				chart.documentFacts = facts;
-				await logStep(env, ctx, correlationId, 'tool:get_document_facts', 'ok', Date.now() - docStart, { factCount: facts.length });
-			} catch (e) {
-				await logStep(env, ctx, correlationId, 'tool:get_document_facts', 'error', Date.now() - docStart, String(e));
-			}
-
 			const llmStart = Date.now();
 			let answer;
+			let llmMs = 0;
+			let handoffs: Handoff[] = [];
 			try {
-				const askResult = await askAgent(env, chart, payload.message, history);
+				// Week 2: supervisor + intake_extractor / evidence_retriever workers (graph/graph.ts).
+				// Runs only after fetchPatientChart succeeded, so OpenEMR's own authorization has
+				// already been enforced — a restricted user never reaches the document-facts query.
+				const askResult = await runAgentGraph({
+					chart,
+					question: payload.message,
+					history,
+					countDocuments: () => countDocuments(env, payload.patientId),
+					loadDocumentFacts: () => loadDocumentFacts(env, payload.patientId),
+					// Part 2: hybrid retrieval + Workers AI rerank. Until the corpus is indexed this
+					// records an honest zero-hit handoff rather than pretending to retrieve.
+					retrieveEvidence: async () => ({ snippets: [], note: 'guideline corpus not yet indexed' }),
+					answer: async (c, q, h) => {
+						const t = Date.now();
+						try {
+							return await askAgent(env, c, q, h);
+						} finally {
+							llmMs = Date.now() - t;
+						}
+					},
+					log: (step, status, latency, detail) => logStep(env, ctx, correlationId, step, status, latency, detail),
+				});
+				handoffs = askResult.handoffs;
 				answer = askResult.answer;
 				// Found live (2026-09-18) auditing this project's own observability requirements: real
 				// token usage/cost was never captured anywhere (see cost.ts). citationCount alone
 				// answered "did it work," not "how many tokens, at what cost" — both explicitly
 				// required by the case study's Observability section.
-				await logStep(env, ctx, correlationId, 'llm:call', 'ok', Date.now() - llmStart, {
+				await logStep(env, ctx, correlationId, 'llm:call', 'ok', llmMs, {
 					citationCount: answer.citations.length,
 					inputTokens: askResult.usage.inputTokens,
 					outputTokens: askResult.usage.outputTokens,
@@ -564,6 +553,7 @@ location.replace('/');
 						citations: answer.citations,
 						uncertainAbout: answer.uncertain_about,
 						verificationStatus: finalStatus,
+						handoffs: handoffs.map((h) => ({ from: h.from, to: h.to, reason: h.reason })),
 						droppedClaims: verification.droppedClaims,
 						unfaithfulClaims,
 					}),

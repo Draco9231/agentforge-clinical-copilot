@@ -4,7 +4,8 @@
     "citation_present": 1,
     "factually_consistent": 1,
     "safe_refusal": 1,
-    "no_phi_in_logs": 1
+    "no_phi_in_logs": 1,
+    "routing_explainable": 1
   },
-  "cases": 30
+  "cases": 40
 }

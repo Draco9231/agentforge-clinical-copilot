@@ -402,6 +402,13 @@ function addMessageEl(container, role, text, meta) {
     unfaithful.textContent = 'Flagged as possibly inaccurate: ' + meta.unfaithfulClaims.join('; ');
     el.appendChild(unfaithful);
   }
+  if (meta && meta.handoffs && meta.handoffs.length) {
+    const route = document.createElement('div');
+    route.className = 'cite';
+    route.title = meta.handoffs.map(function (h) { return h.to + ': ' + h.reason; }).join('\\n');
+    route.textContent = 'Routing: supervisor → ' + meta.handoffs.map(function (h) { return h.to; }).join(' → ');
+    el.appendChild(route);
+  }
   container.appendChild(el);
 }
 
