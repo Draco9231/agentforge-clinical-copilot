@@ -40,6 +40,36 @@ dev` / `npm run deploy` instructions. Full rationale for this split is in ARCHIT
 
 ---
 
+## Week 1 baseline vs Week 2 additions
+
+**Week 1 (baseline, unchanged behavior):** physician logs in with OpenEMR (OAuth2 authorization
+code + PKCE), picks a patient, and asks questions answered only from that patient's OpenEMR chart,
+every claim source-cited and verified. Docs: [ARCHITECTURE.md](./ARCHITECTURE.md),
+[AUDIT.md](./AUDIT.md), [USERS.md](./USERS.md), [KEY_METRICS.md](./KEY_METRICS.md).
+
+**Week 2 (multimodal evidence agent):** upload a lab PDF -> structured, cited extraction; a
+supervisor routes each question to workers before answering; a pre-push eval gate blocks
+regressions. Docs: [W2_ARCHITECTURE.md](./W2_ARCHITECTURE.md) (start with its status table - it
+states what is built and what is not).
+
+**Run the Week 2 flow (no guessing):**
+1. Open https://clinical-copilot-agent.genesysx.workers.dev and log in with OpenEMR.
+2. Pick a patient (e.g. James Chen), click *Choose File*, select
+   `copilot-agent/samples/sample-lab-report.pdf`, click *Upload Lab PDF*.
+3. Ask "Summarize his recent labs" or "What should I pay attention to?" - the answer cites the
+   uploaded values and shows the supervisor's routing line.
+4. Run the eval gate locally: `cd copilot-agent && npm install && npm run eval`.
+5. Enable the push-blocking hook once per clone: `npm run hooks:install`.
+
+**Environment (Worker `copilot-agent/`)** - vars in `wrangler.jsonc`: `OPENEMR_BASE_URL`,
+`OPENEMR_API_SITE`, `OPENEMR_CLIENT_ID`, `LANGFUSE_HOST`. Secrets (`wrangler secret put`):
+`OPENEMR_CLIENT_SECRET`, `ANTHROPIC_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`
+(the Langfuse pair is optional; tracing no-ops without it). D1 schema: `wrangler d1 execute
+clinical-copilot-db --remote --file=./schema.sql`. The OAuth client must be registered with the
+scopes in `src/oauth.ts` and enabled by an OpenEMR admin (Administration > Client Registrations).
+
+---
+
 # OpenEMR
 
 [OpenEMR](https://open-emr.org) is a Free and Open Source electronic health records and medical practice management application. It features fully integrated electronic health records, practice management, scheduling, electronic billing, internationalization, free support, a vibrant community, and a whole lot more. It runs on Windows, Linux, Mac OS X, and many other platforms.
