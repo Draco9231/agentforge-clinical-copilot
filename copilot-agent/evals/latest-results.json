@@ -407,6 +407,62 @@
       "pass": true,
       "detail": "ok",
       "guards": "a fabricated guideline reference being trusted"
+    },
+    {
+      "id": "I1",
+      "category": "schema_valid",
+      "pass": true,
+      "detail": "valid=true, expected true",
+      "guards": "a well-formed intake extraction being rejected"
+    },
+    {
+      "id": "I2",
+      "category": "schema_valid",
+      "pass": true,
+      "detail": "valid=false, expected false",
+      "guards": "an allergy with no citation reaching storage (allergies are the highest-stakes intake field)"
+    },
+    {
+      "id": "I3",
+      "category": "citation_present",
+      "pass": true,
+      "detail": "valid=false, expected false",
+      "guards": "a medication with a blank quote counting as cited"
+    },
+    {
+      "id": "I4",
+      "category": "schema_valid",
+      "pass": true,
+      "detail": "valid=false, expected false",
+      "guards": "a demographics field outside the closed set (e.g. ssn) being accepted"
+    },
+    {
+      "id": "I5",
+      "category": "schema_valid",
+      "pass": true,
+      "detail": "valid=true, expected true",
+      "guards": "an intake with no chief concern or family history being rejected as malformed"
+    },
+    {
+      "id": "I6",
+      "category": "no_phi_in_logs",
+      "pass": true,
+      "detail": "ok",
+      "guards": "contact details (phone/address/email) reaching the answer model's prompt"
+    },
+    {
+      "id": "I7",
+      "category": "factually_consistent",
+      "pass": true,
+      "detail": "ok",
+      "guards": "a patient-reported medication being presented as a chart medication"
+    },
+    {
+      "id": "I8",
+      "category": "factually_consistent",
+      "pass": true,
+      "detail": "ok",
+      "guards": "the same intake form uploaded twice doubling its allergy/medication lines"
     }
   ]
 }

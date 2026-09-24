@@ -1,5 +1,5 @@
 {
-  "_comment": "Week 2 golden set (starter: 57 (target 50) required cases; target of 50 met). Every case is deterministic and runs against the real src/ modules - no network, no model calls - so the pre-push gate is fast and free. Each case names the failure mode it guards. Boolean pass/fail only; no 1-10 scores.",
+  "_comment": "Week 2 golden set (starter: 65 (target 50) required cases; target of 50 met). Every case is deterministic and runs against the real src/ modules - no network, no model calls - so the pre-push gate is fast and free. Each case names the failure mode it guards. Boolean pass/fail only; no 1-10 scores.",
   "fixtures": {
     "chartRich": {
       "patientId": "fixture",
@@ -71,6 +71,73 @@
             "page_or_section": "1",
             "field_or_chunk_id": "hemoglobin_a1c",
             "quote_or_value": "Hemoglobin A1c 7.8 % 4.0-5.6 H"
+          }
+        }
+      ],
+      "extraction_confidence": "high",
+      "unparsed_notes": []
+    },
+    "validIntake": {
+      "demographics": [
+        {
+          "field": "name",
+          "value": "James Chen",
+          "citation": {
+            "source_type": "intake_form",
+            "source_id": "doc-2",
+            "page_or_section": "1",
+            "field_or_chunk_id": "allergy_1",
+            "quote_or_value": "Penicillin - hives"
+          }
+        }
+      ],
+      "chief_concern": {
+        "text": "Follow-up for diabetes",
+        "citation": {
+          "source_type": "intake_form",
+          "source_id": "doc-2",
+          "page_or_section": "1",
+          "field_or_chunk_id": "allergy_1",
+          "quote_or_value": "Penicillin - hives"
+        }
+      },
+      "current_medications": [
+        {
+          "name": "Metformin",
+          "dose": "500 mg",
+          "frequency": "twice daily",
+          "citation": {
+            "source_type": "intake_form",
+            "source_id": "doc-2",
+            "page_or_section": "1",
+            "field_or_chunk_id": "allergy_1",
+            "quote_or_value": "Penicillin - hives"
+          }
+        }
+      ],
+      "allergies": [
+        {
+          "substance": "Penicillin",
+          "reaction": "hives",
+          "citation": {
+            "source_type": "intake_form",
+            "source_id": "doc-2",
+            "page_or_section": "1",
+            "field_or_chunk_id": "allergy_1",
+            "quote_or_value": "Penicillin - hives"
+          }
+        }
+      ],
+      "family_history": [
+        {
+          "condition": "type 2 diabetes",
+          "relative": "Father",
+          "citation": {
+            "source_type": "intake_form",
+            "source_id": "doc-2",
+            "page_or_section": "1",
+            "field_or_chunk_id": "allergy_1",
+            "quote_or_value": "Penicillin - hives"
           }
         }
       ],
@@ -881,6 +948,153 @@
       },
       "expectStatus": "degraded",
       "expectDropped": 1
+    },
+    {
+      "id": "I1",
+      "category": "schema_valid",
+      "kind": "schema",
+      "guards": "a well-formed intake extraction being rejected",
+      "schema": "intakeForm",
+      "fixture": "validIntake",
+      "expectValid": true
+    },
+    {
+      "id": "I2",
+      "category": "schema_valid",
+      "kind": "schema",
+      "guards": "an allergy with no citation reaching storage (allergies are the highest-stakes intake field)",
+      "schema": "intakeForm",
+      "fixture": "validIntake",
+      "mutate": {
+        "delete": "allergies.0.citation"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "I3",
+      "category": "citation_present",
+      "kind": "schema",
+      "guards": "a medication with a blank quote counting as cited",
+      "schema": "intakeForm",
+      "fixture": "validIntake",
+      "mutate": {
+        "set": {
+          "current_medications.0.citation.quote_or_value": ""
+        }
+      },
+      "expectValid": false
+    },
+    {
+      "id": "I4",
+      "category": "schema_valid",
+      "kind": "schema",
+      "guards": "a demographics field outside the closed set (e.g. ssn) being accepted",
+      "schema": "intakeForm",
+      "fixture": "validIntake",
+      "mutate": {
+        "set": {
+          "demographics.0.field": "ssn"
+        }
+      },
+      "expectValid": false
+    },
+    {
+      "id": "I5",
+      "category": "schema_valid",
+      "kind": "schema",
+      "guards": "an intake with no chief concern or family history being rejected as malformed",
+      "schema": "intakeForm",
+      "inline": {
+        "demographics": [],
+        "chief_concern": null,
+        "current_medications": [],
+        "allergies": [],
+        "family_history": [],
+        "extraction_confidence": "low",
+        "unparsed_notes": [
+          "form is blank"
+        ]
+      },
+      "expectValid": true
+    },
+    {
+      "id": "I6",
+      "category": "no_phi_in_logs",
+      "kind": "promptminimal",
+      "guards": "contact details (phone/address/email) reaching the answer model's prompt",
+      "rows": [
+        [
+          "demographics",
+          "phone",
+          "512-555-0192"
+        ],
+        [
+          "demographics",
+          "address",
+          "88 Oak Lane"
+        ],
+        [
+          "demographics",
+          "email",
+          "a@b.invalid"
+        ],
+        [
+          "demographics",
+          "name",
+          "James Chen"
+        ]
+      ],
+      "forbidden": [
+        "512-555",
+        "Oak Lane",
+        "a@b.invalid"
+      ],
+      "requiredText": "James Chen"
+    },
+    {
+      "id": "I7",
+      "category": "factually_consistent",
+      "kind": "promptminimal",
+      "guards": "a patient-reported medication being presented as a chart medication",
+      "rows": [
+        [
+          "medication",
+          "Ibuprofen",
+          "400 mg, as needed"
+        ]
+      ],
+      "requiredText": "Patient-reported current medication",
+      "forbidden": []
+    },
+    {
+      "id": "I8",
+      "category": "factually_consistent",
+      "kind": "dedupe",
+      "guards": "the same intake form uploaded twice doubling its allergy/medication lines",
+      "rows": [
+        [
+          "medication",
+          "Metformin",
+          "500 mg"
+        ],
+        [
+          "medication",
+          "metformin",
+          "500 mg"
+        ],
+        [
+          "allergy",
+          "Penicillin",
+          "hives"
+        ],
+        [
+          "allergy",
+          "Penicillin",
+          "hives"
+        ]
+      ],
+      "expectCount": 2,
+      "intake": true
     }
   ]
 }

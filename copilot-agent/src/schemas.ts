@@ -92,6 +92,28 @@ export const labPdfExtractionSchema = z.object({
 	unparsed_notes: z.array(z.string()).optional().default([]),
 });
 
+// Required intake fields per the W2 PRD: demographics, chief concern, current medications,
+// allergies, family history, source citation. Every item carries its own citation so a single
+// wrong medication or allergy is traceable to the line of the form it came from — allergies and
+// medications are the highest-stakes fields on an intake form.
+export const intakeFormExtractionSchema = z.object({
+	demographics: z.array(
+		z.object({
+			field: z.enum(['name', 'dob', 'sex', 'phone', 'address', 'email']),
+			value: z.string().min(1),
+			citation: citationSchema,
+		}),
+	),
+	chief_concern: z.object({ text: z.string().min(1), citation: citationSchema }).nullish(),
+	current_medications: z.array(
+		z.object({ name: z.string().min(1), dose: z.string().nullish(), frequency: z.string().nullish(), citation: citationSchema }),
+	),
+	allergies: z.array(z.object({ substance: z.string().min(1), reaction: z.string().nullish(), citation: citationSchema })),
+	family_history: z.array(z.object({ condition: z.string().min(1), relative: z.string().nullish(), citation: citationSchema })),
+	extraction_confidence: z.enum(['high', 'medium', 'low']),
+	unparsed_notes: z.array(z.string()).optional().default([]),
+});
+
 // judge.ts's second-pass faithfulness check tool output. Same reasoning as agentAnswerSchema:
 // the Anthropic tools API's input_schema is advisory, not enforced on the wire, and this result
 // feeds directly into what verification status gets shown to a physician — it needs the same

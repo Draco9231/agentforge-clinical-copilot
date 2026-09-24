@@ -59,6 +59,8 @@ export function renderChatPage(openemrBaseUrl: string, apiSite: string): string 
   .doc-upload { display: flex; align-items: center; gap: 0.5rem; padding: 0.6rem 1rem; border-bottom: 1px solid #eee; background: #fafbfe; }
   .doc-upload input[type=file] { flex: 1; font-size: 0.8rem; }
   .doc-upload button { flex-shrink: 0; }
+  .doc-upload select { padding: 0.35rem; border: 1px solid #ddd; border-radius: 6px; font-size: 0.8rem; }
+  .doc-section { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: #777; margin: 0.7rem 0 0.2rem; }
   .upload-status { font-size: 0.78rem; color: #777; }
 
   .msg.document { background: #fff; border: 1px solid #e3e3ea; max-width: 100%; padding: 0.8rem 1rem; }
@@ -103,8 +105,9 @@ export function renderChatPage(openemrBaseUrl: string, apiSite: string): string 
   <section class="chat-pane">
     <div id="chatHeader" class="chat-header"></div>
     <div class="doc-upload">
+      <select id="docTypeSelect"><option value="lab_pdf">Lab PDF</option><option value="intake_form">Intake form</option></select>
       <input type="file" id="labPdfInput" accept="application/pdf" />
-      <button id="uploadBtn" onclick="uploadLabPdf()">Upload Lab PDF</button>
+      <button id="uploadBtn" onclick="uploadLabPdf()">Upload</button>
       <span id="uploadStatus" class="upload-status"></span>
     </div>
     <div id="messages" class="messages"></div>
@@ -323,7 +326,7 @@ async function uploadLabPdf() {
   try {
     const form = new FormData();
     form.append('patientId', id);
-    form.append('doc_type', 'lab_pdf');
+    form.append('doc_type', document.getElementById('docTypeSelect').value);
     form.append('file', file);
     const res = await fetch('/api/documents/attach_and_extract', {
       method: 'POST',
@@ -358,15 +361,37 @@ function renderDocumentCard(container, fileName, meta) {
   let html = '<div class="doc-card-title">&#128196; ' + fileName +
     ' <span class="badge ' + confidence + '">' + confidence + ' confidence</span></div>' +
     '<div class="hint" style="margin:0.3rem 0 0.6rem">' + storedNote + '</div>';
-  (meta.results || []).forEach(function (r) {
-    const flagClass = 'flag-' + (r.abnormal_flag || 'unknown');
-    const valueText = r.value + (r.unit ? ' ' + r.unit : '') + (r.reference_range ? ' (ref ' + r.reference_range + ')' : '');
-    html += '<div class="doc-fact">' +
-      '<div>' + r.test_name + (r.collection_date ? '<div class="doc-fact-cite">' + r.collection_date + '</div>' : '') + '</div>' +
-      '<div class="doc-fact-value ' + flagClass + '">' + valueText +
-        '<div class="doc-fact-cite">p.' + r.citation.page_or_section + ': &ldquo;' + r.citation.quote_or_value + '&rdquo;</div>' +
-      '</div></div>';
-  });
+
+  function row(label, value, cite) {
+    return '<div class="doc-fact"><div>' + label + '</div><div class="doc-fact-value">' + (value || '') +
+      '<div class="doc-fact-cite">p.' + cite.page_or_section + ': &ldquo;' + cite.quote_or_value + '&rdquo;</div></div></div>';
+  }
+
+  if (meta.doc_type === 'intake_form') {
+    if (meta.chief_concern) {
+      html += '<div class="doc-section">Chief concern</div>' + row('', meta.chief_concern.text, meta.chief_concern.citation);
+    }
+    html += '<div class="doc-section">Current medications (patient-reported)</div>';
+    (meta.current_medications || []).forEach(function (m) {
+      html += row(m.name, [m.dose, m.frequency].filter(Boolean).join(', '), m.citation);
+    });
+    html += '<div class="doc-section">Allergies</div>';
+    (meta.allergies || []).forEach(function (a) { html += row(a.substance, a.reaction ? 'reaction: ' + a.reaction : '', a.citation); });
+    html += '<div class="doc-section">Family history</div>';
+    (meta.family_history || []).forEach(function (f) { html += row(f.condition, f.relative || '', f.citation); });
+    html += '<div class="doc-section">Demographics</div>';
+    (meta.demographics || []).forEach(function (d) { html += row(d.field, d.value, d.citation); });
+  } else {
+    (meta.results || []).forEach(function (r) {
+      const flagClass = 'flag-' + (r.abnormal_flag || 'unknown');
+      const valueText = r.value + (r.unit ? ' ' + r.unit : '') + (r.reference_range ? ' (ref ' + r.reference_range + ')' : '');
+      html += '<div class="doc-fact">' +
+        '<div>' + r.test_name + (r.collection_date ? '<div class="doc-fact-cite">' + r.collection_date + '</div>' : '') + '</div>' +
+        '<div class="doc-fact-value ' + flagClass + '">' + valueText +
+          '<div class="doc-fact-cite">p.' + r.citation.page_or_section + ': &ldquo;' + r.citation.quote_or_value + '&rdquo;</div>' +
+        '</div></div>';
+    });
+  }
   if (meta.unparsed_notes && meta.unparsed_notes.length) {
     html += '<div class="cite" style="margin-top:0.5rem">Not extracted: ' + meta.unparsed_notes.join('; ') + '</div>';
   }

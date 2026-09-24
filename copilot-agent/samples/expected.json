@@ -1,0 +1,22 @@
+{
+  "sample-lab-report": {
+    "type": "lab_pdf",
+    "labs": [
+      {"test": "hemoglobin a1c", "value": "7.8", "flag": "high"},
+      {"test": "fasting glucose", "value": "142", "flag": "high"},
+      {"test": "total cholesterol", "value": "210", "flag": "high"},
+      {"test": "hdl cholesterol", "value": "38", "flag": "low"},
+      {"test": "ldl cholesterol", "value": "135", "flag": "high"},
+      {"test": "triglycerides", "value": "185", "flag": "high"},
+      {"test": "creatinine", "value": "1.0", "flag": "normal"}
+    ]
+  },
+  "sample-intake-form": {
+    "type": "intake_form",
+    "medications": ["metformin", "atorvastatin", "ibuprofen"],
+    "allergies": ["penicillin"],
+    "family_history": ["diabetes", "blood pressure", "heart attack"],
+    "chief_concern_contains": ["tired", "thirsty"],
+    "demographics": {"name": "james chen", "dob": "1965"}
+  }
+}

@@ -10,7 +10,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { labPdfExtractionSchema, agentAnswerSchema, chatRequestSchema } from '../src/schemas.ts';
+import { labPdfExtractionSchema, agentAnswerSchema, chatRequestSchema, intakeFormExtractionSchema } from '../src/schemas.ts';
 import { verifyAnswer, flattenChart } from '../src/verify.ts';
 import { sanitizeLogDetail } from '../src/logging.ts';
 import { decideNext } from '../src/graph/routing.ts';
@@ -45,6 +45,7 @@ const SCHEMAS: Record<string, { safeParse: (x: unknown) => { success: boolean } 
 	labPdfExtraction: labPdfExtractionSchema,
 	agentAnswer: agentAnswerSchema,
 	chatRequest: chatRequestSchema,
+	intakeForm: intakeFormExtractionSchema,
 };
 
 function runCase(c: any): { pass: boolean; detail: string } {
@@ -99,11 +100,27 @@ function runCase(c: any): { pass: boolean; detail: string } {
 			for (const w of c.reasonMustExclude ?? []) if (d.reason.includes(w)) problems.push(`reason leaks "${w}"`);
 			return { pass: problems.length === 0, detail: problems.join('; ') || 'ok' };
 		}
-		case 'dedupe': {
-			const rows = c.rows.map(([name, value, date]: string[]) => ({
-				fact_json: JSON.stringify({ test_name: name, value, collection_date: date, abnormal_flag: 'unknown', citation: { source_type: 'lab_pdf', page_or_section: '1' } }),
-				file_name: 'f.pdf',
+		case 'promptminimal': {
+			const rows = c.rows.map(([category, label, value]: string[]) => ({
+				fact_json: JSON.stringify({ category, label, value, citation: { source_type: 'intake_form', page_or_section: '1' } }),
+				file_name: 'intake.pdf',
 			}));
+			const text = dedupeFacts(rows).map((f) => f.text).join(' | ');
+			const problems: string[] = [];
+			for (const f of c.forbidden ?? []) if (text.includes(f)) problems.push(`prompt contains "${f}"`);
+			if (c.requiredText && !text.includes(c.requiredText)) problems.push(`prompt missing "${c.requiredText}"`);
+			return { pass: problems.length === 0, detail: problems.join('; ') || 'ok' };
+		}
+		case 'dedupe': {
+			const rows = c.intake
+				? c.rows.map(([category, label, value]: string[]) => ({
+						fact_json: JSON.stringify({ category, label, value, citation: { source_type: 'intake_form', page_or_section: '1' } }),
+						file_name: 'intake.pdf',
+					}))
+				: c.rows.map(([name, value, date]: string[]) => ({
+						fact_json: JSON.stringify({ test_name: name, value, collection_date: date, abnormal_flag: 'unknown', citation: { source_type: 'lab_pdf', page_or_section: '1' } }),
+						file_name: 'f.pdf',
+					}));
 			const n = dedupeFacts(rows).length;
 			return { pass: n === c.expectCount, detail: n === c.expectCount ? 'ok' : `got ${n}, expected ${c.expectCount}` };
 		}

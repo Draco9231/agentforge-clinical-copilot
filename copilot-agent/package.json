@@ -10,7 +10,8 @@
 		"test": "node --experimental-strip-types --experimental-loader ./scripts/ts-resolve-loader.mjs --test src/*.test.ts",
 		"cf-typegen": "wrangler types",
 		"eval": "node --experimental-strip-types --experimental-loader ./scripts/ts-resolve-loader.mjs evals/run-evals.ts",
-		"hooks:install": "git config core.hooksPath copilot-agent/.githooks"
+		"hooks:install": "git config core.hooksPath copilot-agent/.githooks",
+		"eval:live": "node --experimental-strip-types --experimental-loader ./scripts/ts-resolve-loader.mjs evals/live-extraction.ts"
 	},
 	"dependencies": {
 		"@langchain/core": "^1.2.12",

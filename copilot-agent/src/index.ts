@@ -8,11 +8,11 @@ import { renderChatPage } from './ui';
 import { chatRequestSchema, loginRequestSchema } from './schemas';
 import { buildAuthorizeRedirect, readPkceSession, clearPkceCookie, exchangeCodeForToken, SCOPES } from './oauth';
 import { sendLangfuseSpan } from './langfuse';
-import { extractLabPdf, ExtractionError } from './extraction';
+import { extractLabPdf, extractIntakeForm, ExtractionError } from './extraction';
 import { sanitizeLogDetail } from './logging';
 import { runAgentGraph } from './graph/graph';
 import type { Handoff } from './graph/routing';
-import { loadDocumentFacts, countDocuments } from './document-facts';
+import { loadDocumentFacts, countDocuments, intakeToFacts } from './document-facts';
 import { retrieveGuidelineEvidence } from './rag';
 import { toContractCitation } from './citations';
 import { resolveNumericPid, uploadDocumentToOpenEmr } from './openemr-documents';
@@ -261,12 +261,8 @@ location.replace('/');
 			if (typeof patientId !== 'string' || !patientId) {
 				return cors(new Response(JSON.stringify({ error: 'patientId is required', correlationId }), { status: 400 }));
 			}
-			if (docType !== 'lab_pdf') {
-				// intake_form is Part 2 scope — refusing explicitly here is more honest than a
-				// silent no-op or a misleading 200 for a doc_type this endpoint doesn't handle yet.
-				return cors(
-					new Response(JSON.stringify({ error: 'only doc_type "lab_pdf" is supported so far', correlationId }), { status: 400 }),
-				);
+			if (docType !== 'lab_pdf' && docType !== 'intake_form') {
+				return cors(new Response(JSON.stringify({ error: 'doc_type must be "lab_pdf" or "intake_form"', correlationId }), { status: 400 }));
 			}
 			if (!(file instanceof File)) {
 				return cors(new Response(JSON.stringify({ error: 'file is required', correlationId }), { status: 400 }));
@@ -277,14 +273,25 @@ location.replace('/');
 			const openemrUserId = getOpenemrUserId(token);
 
 			const extractStart = Date.now();
-			let extraction;
-			let usage;
+			const stepName = `extract:${docType}`;
+			let extraction: any;
+			let factJson: { json: unknown; citation: { source_type: string; source_id: string; page_or_section: string; field_or_chunk_id: string; quote_or_value: string } }[];
 			try {
-				const result = await extractLabPdf(env, arrayBufferToBase64(fileBytes), documentId);
-				extraction = result.extraction;
-				usage = result.usage;
-				await logStep(env, ctx, correlationId, 'extract:lab_pdf', 'ok', Date.now() - extractStart, {
-					resultCount: extraction.results.length,
+				const pdfBase64 = arrayBufferToBase64(fileBytes);
+				let usage;
+				if (docType === 'lab_pdf') {
+					const result = await extractLabPdf(env, pdfBase64, documentId);
+					extraction = result.extraction;
+					usage = result.usage;
+					factJson = result.extraction.results.map((r) => ({ json: r, citation: r.citation }));
+				} else {
+					const result = await extractIntakeForm(env, pdfBase64, documentId);
+					extraction = result.extraction;
+					usage = result.usage;
+					factJson = intakeToFacts(result.extraction).map((f) => ({ json: f, citation: f.citation }));
+				}
+				await logStep(env, ctx, correlationId, stepName, 'ok', Date.now() - extractStart, {
+					resultCount: factJson.length,
 					extractionConfidence: extraction.extraction_confidence,
 					inputTokens: usage.inputTokens,
 					outputTokens: usage.outputTokens,
@@ -292,7 +299,7 @@ location.replace('/');
 				});
 			} catch (e) {
 				const errUsage = e instanceof ExtractionError ? e.usage : { inputTokens: 0, outputTokens: 0 };
-				await logStep(env, ctx, correlationId, 'extract:lab_pdf', 'error', Date.now() - extractStart, {
+				await logStep(env, ctx, correlationId, stepName, 'error', Date.now() - extractStart, {
 					error: String(e),
 					inputTokens: errUsage.inputTokens,
 					outputTokens: errUsage.outputTokens,
@@ -312,7 +319,7 @@ location.replace('/');
 			const numericPid = await resolveNumericPid(env, token, patientId);
 			let openemrUploadOk = false;
 			if (numericPid !== null) {
-				const uploadResult = await uploadDocumentToOpenEmr(env, token, numericPid, fileBytes, file.name, 'labreports');
+				const uploadResult = await uploadDocumentToOpenEmr(env, token, numericPid, fileBytes, file.name, docType === 'lab_pdf' ? 'labreports' : 'patientinformation');
 				openemrUploadOk = uploadResult.uploaded;
 				await logStep(env, ctx, correlationId, 'upload:openemr_document', uploadResult.uploaded ? 'ok' : 'error', Date.now() - uploadStart, {
 					numericPid,
@@ -328,22 +335,22 @@ location.replace('/');
 				await env.DB.prepare(
 					'INSERT INTO documents (id, patient_id, openemr_user, doc_type, file_name, openemr_upload_ok, extraction_confidence, correlation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
 				)
-					.bind(documentId, patientId, openemrUserId, 'lab_pdf', file.name, openemrUploadOk ? 1 : 0, extraction.extraction_confidence, correlationId)
+					.bind(documentId, patientId, openemrUserId, docType, file.name, openemrUploadOk ? 1 : 0, extraction.extraction_confidence, correlationId)
 					.run();
-				if (extraction.results.length > 0) {
+				if (factJson.length > 0) {
 					await env.DB.batch(
-						extraction.results.map((r) =>
+						factJson.map((f) =>
 							env.DB.prepare(
 								'INSERT INTO document_facts (id, document_id, fact_json, source_type, source_id, page_or_section, field_or_chunk_id, quote_or_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
 							).bind(
 								crypto.randomUUID(),
 								documentId,
-								JSON.stringify(r),
-								r.citation.source_type,
-								r.citation.source_id,
-								r.citation.page_or_section,
-								r.citation.field_or_chunk_id,
-								r.citation.quote_or_value,
+								JSON.stringify(f.json),
+								f.citation.source_type,
+								f.citation.source_id,
+								f.citation.page_or_section,
+								f.citation.field_or_chunk_id,
+								f.citation.quote_or_value,
 							),
 						),
 					);
@@ -353,7 +360,7 @@ location.replace('/');
 			}
 
 			return cors(
-				new Response(JSON.stringify({ documentId, correlationId, openemrUploadOk, ...extraction }), {
+				new Response(JSON.stringify({ documentId, correlationId, openemrUploadOk, doc_type: docType, ...extraction }), {
 					headers: { 'content-type': 'application/json' },
 				}),
 			);

@@ -1,0 +1,23 @@
+RIVERSIDE FAMILY CLINIC - NEW/RETURNING PATIENT INTAKE FORM
+Date of visit: 2026-09-22
+
+Name: James Chen          Date of birth: 05/14/1965          Sex: Male
+Phone: 512-555-0192       Email: james.chen@example.invalid
+Address: 88 Oak Lane, Austin, TX 78701
+
+REASON FOR VISIT / CHIEF CONCERN
+Follow-up for diabetes. Feeling more tired than usual and very thirsty for the past 3 weeks.
+
+CURRENT MEDICATIONS (name, dose, how often)
+1. Metformin 500 mg - twice daily
+2. Atorvastatin 20 mg - once daily at night
+3. Ibuprofen 400 mg - as needed for back pain
+
+ALLERGIES
+Penicillin - hives
+No other known allergies
+
+FAMILY HISTORY
+Father - type 2 diabetes
+Mother - high blood pressure
+Brother - heart attack at age 52
