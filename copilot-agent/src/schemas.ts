@@ -60,10 +60,13 @@ export const loginRequestSchema = z.object({
 // document-read API cannot reliably confirm what it stored (see openemr-documents.ts).
 export const citationSchema = z.object({
 	source_type: z.enum(['lab_pdf', 'intake_form']),
-	source_id: z.string(),
-	page_or_section: z.string(),
-	field_or_chunk_id: z.string(),
-	quote_or_value: z.string(),
+	// min(1) on all four: an empty string satisfies z.string() but is not provenance. Found via
+	// the Week 2 eval suite (evals/golden.json, citation_present) — a blank quote or page passed
+	// validation, so "citation present" was true in shape only.
+	source_id: z.string().min(1),
+	page_or_section: z.string().min(1),
+	field_or_chunk_id: z.string().min(1),
+	quote_or_value: z.string().min(1),
 });
 
 // Required lab fields per the W2 PRD: test name, value, unit, reference range, collection date,

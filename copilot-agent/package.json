@@ -8,7 +8,9 @@
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"test": "node --experimental-strip-types --experimental-loader ./scripts/ts-resolve-loader.mjs --test src/*.test.ts",
-		"cf-typegen": "wrangler types"
+		"cf-typegen": "wrangler types",
+		"eval": "node --experimental-strip-types --experimental-loader ./scripts/ts-resolve-loader.mjs evals/run-evals.ts",
+		"hooks:install": "git config core.hooksPath copilot-agent/.githooks"
 	},
 	"dependencies": {
 		"zod": "^3.23.8"

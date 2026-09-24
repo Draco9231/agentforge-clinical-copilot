@@ -1,0 +1,221 @@
+{
+  "rates": {
+    "schema_valid": 1,
+    "citation_present": 1,
+    "factually_consistent": 1,
+    "safe_refusal": 1,
+    "no_phi_in_logs": 1
+  },
+  "results": [
+    {
+      "id": "S1",
+      "category": "schema_valid",
+      "pass": true,
+      "detail": "valid=true, expected true",
+      "guards": "schema rejecting a well-formed extraction"
+    },
+    {
+      "id": "S2",
+      "category": "schema_valid",
+      "pass": true,
+      "detail": "valid=false, expected false",
+      "guards": "a result with no citation object reaching storage"
+    },
+    {
+      "id": "S3",
+      "category": "schema_valid",
+      "pass": true,
+      "detail": "valid=false, expected false",
+      "guards": "free-text abnormal flags outside the enum"
+    },
+    {
+      "id": "S4",
+      "category": "schema_valid",
+      "pass": true,
+      "detail": "valid=false, expected false",
+      "guards": "an extraction with no self-reported confidence being shown as if it were clean"
+    },
+    {
+      "id": "S5",
+      "category": "schema_valid",
+      "pass": true,
+      "detail": "valid=true, expected true",
+      "guards": "forcing the model to invent a unit/range that is genuinely absent from the scan"
+    },
+    {
+      "id": "S6",
+      "category": "schema_valid",
+      "pass": true,
+      "detail": "valid=false, expected false",
+      "guards": "citations pointing at an unsupported document type"
+    },
+    {
+      "id": "S7",
+      "category": "schema_valid",
+      "pass": true,
+      "detail": "valid=true, expected true",
+      "guards": "an unreadable scan crashing instead of returning an honest empty, low-confidence result"
+    },
+    {
+      "id": "S8",
+      "category": "schema_valid",
+      "pass": true,
+      "detail": "valid=false, expected false",
+      "guards": "silent numeric coercion of extracted values"
+    },
+    {
+      "id": "C1",
+      "category": "citation_present",
+      "pass": true,
+      "detail": "ok",
+      "guards": "uploaded-document facts not being citable at all"
+    },
+    {
+      "id": "C2",
+      "category": "citation_present",
+      "pass": true,
+      "detail": "ok",
+      "guards": "an uncited answer being presented as verified"
+    },
+    {
+      "id": "C3",
+      "category": "citation_present",
+      "pass": true,
+      "detail": "ok",
+      "guards": "a citation to a document fact that does not exist being trusted"
+    },
+    {
+      "id": "C4",
+      "category": "citation_present",
+      "pass": true,
+      "detail": "valid=false, expected false",
+      "guards": "a model answer with no citations array reaching the verifier"
+    },
+    {
+      "id": "C5",
+      "category": "citation_present",
+      "pass": true,
+      "detail": "valid=false, expected false",
+      "guards": "a blank quote counting as a present citation (found by this suite)"
+    },
+    {
+      "id": "C6",
+      "category": "citation_present",
+      "pass": true,
+      "detail": "valid=false, expected false",
+      "guards": "a citation with no page counting as traceable"
+    },
+    {
+      "id": "F1",
+      "category": "factually_consistent",
+      "pass": true,
+      "detail": "ok",
+      "guards": "extracted values being altered on the way into the model's context"
+    },
+    {
+      "id": "F2",
+      "category": "factually_consistent",
+      "pass": true,
+      "detail": "ok",
+      "guards": "silent breakage of the field-key contract the model is prompted against"
+    },
+    {
+      "id": "F3",
+      "category": "factually_consistent",
+      "pass": true,
+      "detail": "ok",
+      "guards": "a fabricated medication reference being trusted"
+    },
+    {
+      "id": "F4",
+      "category": "factually_consistent",
+      "pass": true,
+      "detail": "ok",
+      "guards": "one fabricated claim taking down, or hiding behind, a real one"
+    },
+    {
+      "id": "F5",
+      "category": "factually_consistent",
+      "pass": true,
+      "detail": "ok",
+      "guards": "Week 1 charts growing phantom document fields"
+    },
+    {
+      "id": "R1",
+      "category": "safe_refusal",
+      "pass": true,
+      "detail": "ok",
+      "guards": "an empty record producing a confident 'verified' answer"
+    },
+    {
+      "id": "R2",
+      "category": "safe_refusal",
+      "pass": true,
+      "detail": "ok",
+      "guards": "inventing a medication for a patient with no chart data"
+    },
+    {
+      "id": "R3",
+      "category": "safe_refusal",
+      "pass": true,
+      "detail": "valid=false, expected false",
+      "guards": "an empty question reaching the model"
+    },
+    {
+      "id": "R4",
+      "category": "safe_refusal",
+      "pass": true,
+      "detail": "valid=false, expected false",
+      "guards": "prompt injection via a forged system-role history turn"
+    },
+    {
+      "id": "R5",
+      "category": "safe_refusal",
+      "pass": true,
+      "detail": "valid=false, expected false",
+      "guards": "a question with no patient being answered against some default chart"
+    },
+    {
+      "id": "P1",
+      "category": "no_phi_in_logs",
+      "pass": true,
+      "detail": "ok",
+      "guards": "patient identifiers reaching D1/Langfuse (a real leak found in tool:get_patient_chart)"
+    },
+    {
+      "id": "P2",
+      "category": "no_phi_in_logs",
+      "pass": true,
+      "detail": "ok",
+      "guards": "clinical claim text in verify logs (a real leak found in the verify step)"
+    },
+    {
+      "id": "P3",
+      "category": "no_phi_in_logs",
+      "pass": true,
+      "detail": "ok",
+      "guards": "extracted document text nested inside a log detail"
+    },
+    {
+      "id": "P4",
+      "category": "no_phi_in_logs",
+      "pass": true,
+      "detail": "ok",
+      "guards": "an unbounded upstream error string carrying arbitrary content"
+    },
+    {
+      "id": "P5",
+      "category": "no_phi_in_logs",
+      "pass": true,
+      "detail": "ok",
+      "guards": "over-redaction destroying the operational metrics the PRD requires (tokens, cost, confidence)"
+    },
+    {
+      "id": "P6",
+      "category": "no_phi_in_logs",
+      "pass": true,
+      "detail": "ok",
+      "guards": "patient names leaking through uploaded file names"
+    }
+  ]
+}

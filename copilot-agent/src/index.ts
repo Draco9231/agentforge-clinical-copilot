@@ -9,6 +9,7 @@ import { chatRequestSchema, loginRequestSchema } from './schemas';
 import { buildAuthorizeRedirect, readPkceSession, clearPkceCookie, exchangeCodeForToken, SCOPES } from './oauth';
 import { sendLangfuseSpan } from './langfuse';
 import { extractLabPdf, ExtractionError } from './extraction';
+import { sanitizeLogDetail } from './logging';
 import { resolveNumericPid, uploadDocumentToOpenEmr } from './openemr-documents';
 
 async function logStep(
@@ -18,8 +19,9 @@ async function logStep(
 	step: string,
 	status: 'ok' | 'error' | 'degraded',
 	latencyMs: number,
-	detail?: unknown,
+	rawDetail?: unknown,
 ) {
+	const detail = sanitizeLogDetail(rawDetail);
 	const payload = { correlationId, step, status, latencyMs, detail };
 	console.log(JSON.stringify(payload));
 	try {

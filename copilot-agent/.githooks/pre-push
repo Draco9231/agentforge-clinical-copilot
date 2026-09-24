@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# PR-blocking eval gate (Week 2 hard gate). Runs the unit tests and the 30-case golden eval
+# before any push; a non-zero exit from either aborts the push. Offline and deterministic, so it
+# takes a couple of seconds and costs nothing.
+# Install once per clone:  npm run hooks:install   (from copilot-agent/)
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)/copilot-agent"
+echo "[pre-push] unit tests"
+npm test --silent
+echo "[pre-push] eval gate"
+npm run eval --silent
