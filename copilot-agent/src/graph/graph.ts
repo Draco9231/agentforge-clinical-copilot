@@ -75,15 +75,22 @@ export async function runAgentGraph(deps: GraphDeps): Promise<GraphResult> {
 			});
 			return { evidenceDone: true };
 		})
-		.addNode('answer', async () => {
+		// Node is named compose_answer, not answer: LangGraph rejects a node whose name matches a
+		// state field (here `answer`), which threw on every request before this was caught. The
+		// supervisor's routing vocabulary (and the logged handoff `to`) stays 'answer'.
+		.addNode('compose_answer', async () => {
 			const result = await deps.answer(deps.chart, deps.question, deps.history);
 			return { answer: result.answer, usage: result.usage };
 		})
 		.addEdge(START, 'supervisor')
-		.addConditionalEdges('supervisor', (state) => state.next as Worker, ['intake_extractor', 'evidence_retriever', 'answer'])
+		.addConditionalEdges('supervisor', (state) => state.next as Worker, {
+			intake_extractor: 'intake_extractor',
+			evidence_retriever: 'evidence_retriever',
+			answer: 'compose_answer',
+		})
 		.addEdge('intake_extractor', 'supervisor')
 		.addEdge('evidence_retriever', 'supervisor')
-		.addEdge('answer', END)
+		.addEdge('compose_answer', END)
 		.compile();
 
 	const final = await graph.invoke({});
