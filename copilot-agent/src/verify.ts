@@ -19,6 +19,9 @@ export function flattenChart(chart: PatientChart): Record<string, string> {
 	(chart.documentFacts ?? []).forEach((f, i) => {
 		fields[`documentFacts[${i}]`] = `${f.text} [source: ${f.source}]`;
 	});
+	(chart.guidelineEvidence ?? []).forEach((e, i) => {
+		fields[`guidelineEvidence[${i}]`] = `${e.text} [general guideline, not a fact about this patient: ${e.source} - ${e.section}]`;
+	});
 	return fields;
 }
 

@@ -1,7 +1,7 @@
 import type { Env } from './types';
 import { fetchPatientChart, OpenEmrAuthError } from './openemr';
 import { askAgent, ModelCallError } from './agent';
-import { verifyAnswer } from './verify';
+import { verifyAnswer, flattenChart } from './verify';
 import { judgeFaithfulness } from './judge';
 import { estimateCostUsd } from './cost';
 import { renderChatPage } from './ui';
@@ -13,6 +13,8 @@ import { sanitizeLogDetail } from './logging';
 import { runAgentGraph } from './graph/graph';
 import type { Handoff } from './graph/routing';
 import { loadDocumentFacts, countDocuments } from './document-facts';
+import { retrieveGuidelineEvidence } from './rag';
+import { toContractCitation } from './citations';
 import { resolveNumericPid, uploadDocumentToOpenEmr } from './openemr-documents';
 
 async function logStep(
@@ -459,7 +461,20 @@ location.replace('/');
 					loadDocumentFacts: () => loadDocumentFacts(env, payload.patientId),
 					// Part 2: hybrid retrieval + Workers AI rerank. Until the corpus is indexed this
 					// records an honest zero-hit handoff rather than pretending to retrieve.
-					retrieveEvidence: async () => ({ snippets: [], note: 'guideline corpus not yet indexed' }),
+					// Query = the question plus the patient's condition names, so a generic
+					// "what should I pay attention to?" still retrieves diabetes/lipid guidance
+					// (contextual retrieval). Sent only to Workers AI inside Cloudflare, never logged.
+					retrieveEvidence: async (question) => {
+						try {
+							const query = [question, ...chart.conditions.map((c) => c.text)].join('. ');
+							return await retrieveGuidelineEvidence(env, query);
+						} catch (e) {
+							// Retrieval is additive: if it fails, degrade to an answer without guideline
+							// evidence rather than failing the physician's question.
+							await logStep(env, ctx, correlationId, 'worker:evidence_retriever', 'error', 0, String(e));
+							return { evidence: [], note: 'retrieval failed; answering without guideline evidence' };
+						}
+					},
 					answer: async (c, q, h) => {
 						const t = Date.now();
 						try {
@@ -550,7 +565,13 @@ location.replace('/');
 						conversationId,
 						correlationId,
 						summary: answer.summary,
-						citations: answer.citations,
+						// Each surviving citation is enriched with the full W2 citation contract, derived
+						// server-side from the field the model named (citations.ts) — additive, so the
+						// Week 1 {claim, source_field} shape the UI reads is unchanged.
+						citations: (() => {
+							const flat = flattenChart(chart);
+							return answer.citations.map((c) => ({ ...c, ...(toContractCitation(chart, c.source_field, flat) ?? {}) }));
+						})(),
 						uncertainAbout: answer.uncertain_about,
 						verificationStatus: finalStatus,
 						handoffs: handoffs.map((h) => ({ from: h.from, to: h.to, reason: h.reason })),

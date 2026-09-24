@@ -15,9 +15,11 @@ import { verifyAnswer, flattenChart } from '../src/verify.ts';
 import { sanitizeLogDetail } from '../src/logging.ts';
 import { decideNext } from '../src/graph/routing.ts';
 import { dedupeFacts } from '../src/document-facts.ts';
+import { buildFtsQuery, reciprocalRankFusion, cosine, filterByScore } from '../src/rag.ts';
+import { toContractCitation } from '../src/citations.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const CATEGORIES = ['schema_valid', 'citation_present', 'factually_consistent', 'safe_refusal', 'no_phi_in_logs', 'routing_explainable'] as const;
+const CATEGORIES = ['schema_valid', 'citation_present', 'factually_consistent', 'safe_refusal', 'no_phi_in_logs', 'routing_explainable', 'retrieval_correct'] as const;
 const PASS_THRESHOLD = 0.95;
 const MAX_REGRESSION = 0.05;
 
@@ -104,6 +106,41 @@ function runCase(c: any): { pass: boolean; detail: string } {
 			}));
 			const n = dedupeFacts(rows).length;
 			return { pass: n === c.expectCount, detail: n === c.expectCount ? 'ok' : `got ${n}, expected ${c.expectCount}` };
+		}
+		case 'fts': {
+			const q = buildFtsQuery(c.text);
+			return { pass: q === c.expect, detail: q === c.expect ? 'ok' : `got "${q}", expected "${c.expect}"` };
+		}
+		case 'rrf': {
+			const out = reciprocalRankFusion(c.lists).map((x) => x.id);
+			const problems: string[] = [];
+			if (c.expectOrder && JSON.stringify(out) !== JSON.stringify(c.expectOrder)) problems.push(`order ${out.join(',')}, expected ${c.expectOrder.join(',')}`);
+			if (c.expectCount !== undefined && out.length !== c.expectCount) problems.push(`count ${out.length}, expected ${c.expectCount}`);
+			return { pass: problems.length === 0, detail: problems.join('; ') || 'ok' };
+		}
+		case 'cosine': {
+			const v = cosine(c.a, c.b);
+			const ok = Number.isFinite(v) && Math.abs(v - c.expectApprox) < 1e-6;
+			return { pass: ok, detail: ok ? 'ok' : `got ${v}, expected ${c.expectApprox}` };
+		}
+		case 'floor': {
+			const n = filterByScore(c.scores.map((rerankScore: number) => ({ rerankScore }))).length;
+			return { pass: n === c.expectCount, detail: n === c.expectCount ? 'ok' : `kept ${n}, expected ${c.expectCount}` };
+		}
+		case 'contract': {
+			const chart = clone(golden.fixtures[c.fixture]);
+			const res: any = toContractCitation(chart, c.field, flattenChart(chart));
+			const problems: string[] = [];
+			if (c.expectNull) {
+				if (res !== null) problems.push('expected null');
+			} else if (res === null) {
+				problems.push('got null');
+			} else {
+				for (const [k, v] of Object.entries(c.expect ?? {})) if (res[k] !== v) problems.push(`${k}=${res[k]}, expected ${v}`);
+				if (c.expectQuoteContains && !String(res.quote_or_value).includes(c.expectQuoteContains)) problems.push('quote_or_value missing expected text');
+				for (const k of ['source_type', 'source_id', 'page_or_section', 'field_or_chunk_id', 'quote_or_value']) if (!res[k]) problems.push(`empty ${k}`);
+			}
+			return { pass: problems.length === 0, detail: problems.join('; ') || 'ok' };
 		}
 		default:
 			return { pass: false, detail: `unknown case kind ${c.kind}` };

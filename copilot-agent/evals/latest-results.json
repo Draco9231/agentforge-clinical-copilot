@@ -5,7 +5,8 @@
     "factually_consistent": 1,
     "safe_refusal": 1,
     "no_phi_in_logs": 1,
-    "routing_explainable": 1
+    "routing_explainable": 1,
+    "retrieval_correct": 1
   },
   "results": [
     {
@@ -287,6 +288,125 @@
       "pass": true,
       "detail": "ok",
       "guards": "dedupe collapsing a real trend (same test, different dates) into one value"
+    },
+    {
+      "id": "Q1",
+      "category": "retrieval_correct",
+      "pass": true,
+      "detail": "ok",
+      "guards": "punctuation and stopwords polluting the sparse query"
+    },
+    {
+      "id": "Q2",
+      "category": "retrieval_correct",
+      "pass": true,
+      "detail": "ok",
+      "guards": "an all-punctuation question producing an FTS syntax error"
+    },
+    {
+      "id": "Q3",
+      "category": "retrieval_correct",
+      "pass": true,
+      "detail": "ok",
+      "guards": "FTS operators/quotes in user text being interpreted as query syntax"
+    },
+    {
+      "id": "Q4",
+      "category": "retrieval_correct",
+      "pass": true,
+      "detail": "ok",
+      "guards": "fusion ignoring an item that both retrievers agree on"
+    },
+    {
+      "id": "Q5",
+      "category": "retrieval_correct",
+      "pass": true,
+      "detail": "ok",
+      "guards": "a chunk found by only one retriever being dropped from the candidates"
+    },
+    {
+      "id": "Q6",
+      "category": "retrieval_correct",
+      "pass": true,
+      "detail": "ok",
+      "guards": "identical embeddings not scoring as maximally similar"
+    },
+    {
+      "id": "Q7",
+      "category": "retrieval_correct",
+      "pass": true,
+      "detail": "ok",
+      "guards": "orthogonal embeddings scoring as similar"
+    },
+    {
+      "id": "Q8",
+      "category": "retrieval_correct",
+      "pass": true,
+      "detail": "ok",
+      "guards": "a zero vector producing NaN and poisoning the ranking"
+    },
+    {
+      "id": "Q9",
+      "category": "safe_refusal",
+      "pass": true,
+      "detail": "ok",
+      "guards": "off-topic questions being answered with three least-bad guideline chunks"
+    },
+    {
+      "id": "Q10",
+      "category": "retrieval_correct",
+      "pass": true,
+      "detail": "ok",
+      "guards": "the relevance floor discarding a genuinely relevant top hit"
+    },
+    {
+      "id": "K1",
+      "category": "citation_present",
+      "pass": true,
+      "detail": "ok",
+      "guards": "a lab fact citation losing its page/quote provenance on the way to the response"
+    },
+    {
+      "id": "K2",
+      "category": "citation_present",
+      "pass": true,
+      "detail": "ok",
+      "guards": "a guideline citation not identifying its source chunk"
+    },
+    {
+      "id": "K3",
+      "category": "citation_present",
+      "pass": true,
+      "detail": "ok",
+      "guards": "an OpenEMR chart citation missing its resource type"
+    },
+    {
+      "id": "K4",
+      "category": "citation_present",
+      "pass": true,
+      "detail": "ok",
+      "guards": "a citation to a nonexistent document fact being given manufactured provenance"
+    },
+    {
+      "id": "K5",
+      "category": "citation_present",
+      "pass": true,
+      "detail": "ok",
+      "guards": "a malformed field key being parsed as a valid citation"
+    },
+    {
+      "id": "V1",
+      "category": "citation_present",
+      "pass": true,
+      "detail": "ok",
+      "guards": "guideline evidence not being citable"
+    },
+    {
+      "id": "V2",
+      "category": "factually_consistent",
+      "pass": true,
+      "detail": "ok",
+      "guards": "a fabricated guideline reference being trusted"
     }
   ]
 }

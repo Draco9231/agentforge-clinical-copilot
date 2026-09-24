@@ -8,9 +8,9 @@ export interface DocFactRow {
 // Newest document first, deduped by test+date so re-uploading the same report doesn't multiply
 // identical facts in the model's context (seen live: three uploads of one report -> 21 lines).
 // Pure and separately testable; the D1 query lives in loadDocumentFacts below.
-export function dedupeFacts(rows: DocFactRow[]): { text: string; source: string }[] {
+export function dedupeFacts(rows: DocFactRow[]) {
 	const seen = new Set<string>();
-	const facts: { text: string; source: string }[] = [];
+	const facts: { text: string; source: string; citation?: { source_type: string; source_id: string; page_or_section: string; field_or_chunk_id: string; quote_or_value: string } }[] = [];
 	for (const row of rows) {
 		const r = JSON.parse(row.fact_json);
 		const key = `${r.test_name}|${r.collection_date ?? ''}`;
@@ -24,7 +24,7 @@ export function dedupeFacts(rows: DocFactRow[]): { text: string; source: string 
 		]
 			.filter(Boolean)
 			.join(', ');
-		facts.push({ text: `${r.test_name}: ${detail}`, source: `uploaded ${r.citation.source_type} "${row.file_name}" p.${r.citation.page_or_section}` });
+		facts.push({ text: `${r.test_name}: ${detail}`, source: `uploaded ${r.citation.source_type} "${row.file_name}" p.${r.citation.page_or_section}`, citation: r.citation });
 	}
 	return facts;
 }

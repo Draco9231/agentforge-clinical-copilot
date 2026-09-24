@@ -19,8 +19,8 @@ export interface GraphDeps {
 	question: string;
 	history: { role: 'user' | 'assistant'; content: string }[];
 	countDocuments: () => Promise<number>;
-	loadDocumentFacts: () => Promise<{ text: string; source: string }[]>;
-	retrieveEvidence: (question: string) => Promise<{ snippets: unknown[]; note: string }>;
+	loadDocumentFacts: () => Promise<NonNullable<PatientChart['documentFacts']>>;
+	retrieveEvidence: (question: string) => Promise<{ evidence: { text: string; source: string; section: string; chunkId: string; rerankScore?: number }[]; note: string; stats?: Record<string, unknown> }>;
 	answer: (chart: PatientChart, question: string, history: { role: 'user' | 'assistant'; content: string }[]) => Promise<{ answer: AgentAnswer; usage: ModelUsage }>;
 	// Structured, PHI-free step logging (see logging.ts). Called for every handoff and worker run.
 	log: (step: string, status: 'ok' | 'error', latencyMs: number, detail?: unknown) => Promise<void>;
@@ -64,7 +64,15 @@ export async function runAgentGraph(deps: GraphDeps): Promise<GraphResult> {
 		.addNode('evidence_retriever', async () => {
 			const start = Date.now();
 			const result = await deps.retrieveEvidence(deps.question);
-			await deps.log('worker:evidence_retriever', 'ok', Date.now() - start, { retrievalHits: result.snippets.length, note: result.note });
+			deps.chart.guidelineEvidence = result.evidence.map((e) => ({ text: e.text, source: e.source, section: e.section, chunkId: e.chunkId }));
+			// Scores and counts only — never the query or the retrieved text (query carries the
+			// physician's question and the patient's conditions).
+			await deps.log('worker:evidence_retriever', 'ok', Date.now() - start, {
+				retrievalHits: result.evidence.length,
+				topScore: result.evidence[0]?.rerankScore ?? null,
+				note: result.note,
+				...(result.stats ?? {}),
+			});
 			return { evidenceDone: true };
 		})
 		.addNode('answer', async () => {

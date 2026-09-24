@@ -70,3 +70,17 @@ CREATE TABLE IF NOT EXISTS document_facts (
 
 CREATE INDEX IF NOT EXISTS idx_documents_patient ON documents(patient_id);
 CREATE INDEX IF NOT EXISTS idx_document_facts_document ON document_facts(document_id);
+
+-- Week 2 RAG: guideline corpus for the evidence_retriever worker. guideline_chunks is the
+-- canonical row (with its embedding cached as JSON, computed lazily on first retrieval);
+-- guideline_fts is the sparse index over the same text. Seeded from corpus/guidelines.json by
+-- scripts/seed-corpus.mjs. At this corpus size (~14 chunks) cosine similarity is computed in the
+-- Worker; a vector database (Vectorize) only earns its place at orders of magnitude more chunks.
+CREATE TABLE IF NOT EXISTS guideline_chunks (
+  id TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  section TEXT NOT NULL,
+  text TEXT NOT NULL,
+  embedding TEXT
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS guideline_fts USING fts5(id UNINDEXED, source, section, text);

@@ -1,5 +1,5 @@
 {
-  "_comment": "Week 2 golden set (starter: 40 of the 50 required cases; Part 2 extends to 50). Every case is deterministic and runs against the real src/ modules - no network, no model calls - so the pre-push gate is fast and free. Each case names the failure mode it guards. Boolean pass/fail only; no 1-10 scores.",
+  "_comment": "Week 2 golden set (starter: 57 (target 50) required cases; target of 50 met). Every case is deterministic and runs against the real src/ modules - no network, no model calls - so the pre-push gate is fast and free. Each case names the failure mode it guards. Boolean pass/fail only; no 1-10 scores.",
   "fixtures": {
     "chartRich": {
       "patientId": "fixture",
@@ -29,7 +29,22 @@
       "documentFacts": [
         {
           "text": "Hemoglobin A1c: 7.8 %, ref 4.0-5.6, flag high, collected 2026-09-20",
-          "source": "uploaded lab_pdf \"sample-lab-report.pdf\" p.1"
+          "source": "uploaded lab_pdf \"sample-lab-report.pdf\" p.1",
+          "citation": {
+            "source_type": "lab_pdf",
+            "source_id": "doc-1",
+            "page_or_section": "1",
+            "field_or_chunk_id": "hemoglobin_a1c",
+            "quote_or_value": "Hemoglobin A1c 7.8 % 4.0-5.6 H"
+          }
+        }
+      ],
+      "guidelineEvidence": [
+        {
+          "text": "A reasonable A1C goal for many nonpregnant adults with diabetes is below 7%.",
+          "source": "ADA Standards of Care in Diabetes",
+          "section": "Glycemic Goals",
+          "chunkId": "ada-glycemic-goals"
         }
       ]
     },
@@ -639,6 +654,233 @@
       ],
       "expectCount": 2,
       "guards": "dedupe collapsing a real trend (same test, different dates) into one value"
+    },
+    {
+      "id": "Q1",
+      "category": "retrieval_correct",
+      "kind": "fts",
+      "guards": "punctuation and stopwords polluting the sparse query",
+      "text": "What should I pay attention to today? A1c!",
+      "expect": "pay OR attention OR today OR a1c"
+    },
+    {
+      "id": "Q2",
+      "category": "retrieval_correct",
+      "kind": "fts",
+      "guards": "an all-punctuation question producing an FTS syntax error",
+      "text": "?!...",
+      "expect": ""
+    },
+    {
+      "id": "Q3",
+      "category": "retrieval_correct",
+      "kind": "fts",
+      "guards": "FTS operators/quotes in user text being interpreted as query syntax",
+      "text": "A1c\" OR (goal) NEAR* x",
+      "expect": "a1c OR goal OR near"
+    },
+    {
+      "id": "Q4",
+      "category": "retrieval_correct",
+      "kind": "rrf",
+      "guards": "fusion ignoring an item that both retrievers agree on",
+      "lists": [
+        [
+          "a",
+          "b"
+        ],
+        [
+          "b",
+          "c"
+        ]
+      ],
+      "expectOrder": [
+        "b",
+        "a",
+        "c"
+      ]
+    },
+    {
+      "id": "Q5",
+      "category": "retrieval_correct",
+      "kind": "rrf",
+      "guards": "a chunk found by only one retriever being dropped from the candidates",
+      "lists": [
+        [
+          "a"
+        ],
+        [
+          "b"
+        ]
+      ],
+      "expectCount": 2
+    },
+    {
+      "id": "Q6",
+      "category": "retrieval_correct",
+      "kind": "cosine",
+      "guards": "identical embeddings not scoring as maximally similar",
+      "a": [
+        1,
+        2,
+        3
+      ],
+      "b": [
+        1,
+        2,
+        3
+      ],
+      "expectApprox": 1
+    },
+    {
+      "id": "Q7",
+      "category": "retrieval_correct",
+      "kind": "cosine",
+      "guards": "orthogonal embeddings scoring as similar",
+      "a": [
+        1,
+        0
+      ],
+      "b": [
+        0,
+        1
+      ],
+      "expectApprox": 0
+    },
+    {
+      "id": "Q8",
+      "category": "retrieval_correct",
+      "kind": "cosine",
+      "guards": "a zero vector producing NaN and poisoning the ranking",
+      "a": [
+        0,
+        0
+      ],
+      "b": [
+        1,
+        2
+      ],
+      "expectApprox": 0
+    },
+    {
+      "id": "Q9",
+      "category": "safe_refusal",
+      "kind": "floor",
+      "guards": "off-topic questions being answered with three least-bad guideline chunks",
+      "scores": [
+        4e-05,
+        0.0,
+        0.0
+      ],
+      "expectCount": 0
+    },
+    {
+      "id": "Q10",
+      "category": "retrieval_correct",
+      "kind": "floor",
+      "guards": "the relevance floor discarding a genuinely relevant top hit",
+      "scores": [
+        0.9,
+        0.3,
+        0.05,
+        4e-05
+      ],
+      "expectCount": 2
+    },
+    {
+      "id": "K1",
+      "category": "citation_present",
+      "kind": "contract",
+      "guards": "a lab fact citation losing its page/quote provenance on the way to the response",
+      "fixture": "chartRich",
+      "field": "documentFacts[0]",
+      "expect": {
+        "source_type": "lab_pdf",
+        "source_id": "doc-1",
+        "page_or_section": "1",
+        "field_or_chunk_id": "hemoglobin_a1c"
+      }
+    },
+    {
+      "id": "K2",
+      "category": "citation_present",
+      "kind": "contract",
+      "guards": "a guideline citation not identifying its source chunk",
+      "fixture": "chartRich",
+      "field": "guidelineEvidence[0]",
+      "expect": {
+        "source_type": "guideline",
+        "source_id": "ada-glycemic-goals"
+      }
+    },
+    {
+      "id": "K3",
+      "category": "citation_present",
+      "kind": "contract",
+      "guards": "an OpenEMR chart citation missing its resource type",
+      "fixture": "chartRich",
+      "field": "conditions[0]",
+      "expect": {
+        "source_type": "openemr_fhir",
+        "page_or_section": "Condition"
+      },
+      "expectQuoteContains": "Type 2 diabetes"
+    },
+    {
+      "id": "K4",
+      "category": "citation_present",
+      "kind": "contract",
+      "guards": "a citation to a nonexistent document fact being given manufactured provenance",
+      "fixture": "chartRich",
+      "field": "documentFacts[9]",
+      "expectNull": true
+    },
+    {
+      "id": "K5",
+      "category": "citation_present",
+      "kind": "contract",
+      "guards": "a malformed field key being parsed as a valid citation",
+      "fixture": "chartRich",
+      "field": "medications[0]; drop table",
+      "expectNull": true
+    },
+    {
+      "id": "V1",
+      "category": "citation_present",
+      "kind": "verify",
+      "guards": "guideline evidence not being citable",
+      "fixture": "chartRich",
+      "answer": {
+        "summary": "Guideline goal is below 7%.",
+        "citations": [
+          {
+            "claim": "A1c goal",
+            "source_field": "guidelineEvidence[0]"
+          }
+        ],
+        "uncertain_about": []
+      },
+      "expectStatus": "verified",
+      "expectDropped": 0
+    },
+    {
+      "id": "V2",
+      "category": "factually_consistent",
+      "kind": "verify",
+      "guards": "a fabricated guideline reference being trusted",
+      "fixture": "chartRich",
+      "answer": {
+        "summary": "Guideline says X.",
+        "citations": [
+          {
+            "claim": "X",
+            "source_field": "guidelineEvidence[4]"
+          }
+        ],
+        "uncertain_about": []
+      },
+      "expectStatus": "degraded",
+      "expectDropped": 1
     }
   ]
 }
