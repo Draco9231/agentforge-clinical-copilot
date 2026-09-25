@@ -463,6 +463,41 @@
       "pass": true,
       "detail": "ok",
       "guards": "the same intake form uploaded twice doubling its allergy/medication lines"
+    },
+    {
+      "id": "M1",
+      "category": "factually_consistent",
+      "pass": true,
+      "detail": "ok",
+      "guards": "the instruction separating guideline text from patient facts being weakened or removed"
+    },
+    {
+      "id": "M2",
+      "category": "factually_consistent",
+      "pass": true,
+      "detail": "ok",
+      "guards": "uploaded-document facts losing their provenance label in the prompt"
+    },
+    {
+      "id": "M3",
+      "category": "routing_explainable",
+      "pass": true,
+      "detail": "ok",
+      "guards": "the brevity instruction being dropped, silently bringing back 15 s / 1,700-token answers"
+    },
+    {
+      "id": "M4",
+      "category": "safe_refusal",
+      "pass": true,
+      "detail": "ok",
+      "guards": "brevity being allowed to override citations or safety items"
+    },
+    {
+      "id": "M5",
+      "category": "citation_present",
+      "pass": true,
+      "detail": "ok",
+      "guards": "the chart block not being appended to the prompt the model reads"
     }
   ]
 }

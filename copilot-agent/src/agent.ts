@@ -14,7 +14,7 @@ const SUBMIT_ANSWER_TOOL = {
 	input_schema: {
 		type: 'object',
 		properties: {
-			summary: { type: 'string', description: 'The answer, in plain clinical language, ready to read in a 90-second window.' },
+			summary: { type: 'string', description: 'The answer in plain clinical language, ready to read in about 90 seconds: brief, prioritized, no more than 4 points for a broad question.' },
 			citations: {
 				type: 'array',
 				items: {
@@ -46,6 +46,33 @@ export interface AskAgentResult {
 	usage: ModelUsage;
 }
 
+// Exported so the eval gate can assert the instructions that carry safety and latency weight are
+// still present (evals/golden.json, kind "prompt") — a prompt is code that a refactor can quietly
+// weaken, and nothing else would notice.
+export function buildSystemPrompt(chartBlock: string): string {
+	return (
+		'You are a Clinical Co-Pilot embedded in OpenEMR, helping a physician between patient rooms. ' +
+		'You only know what is in the chart data below for THIS patient. Do not use outside medical ' +
+		'knowledge to state facts about this patient. You may use general clinical knowledge only to ' +
+		'explain why something might matter, clearly separated from chart facts. Fields named ' +
+		'guidelineEvidence[n] are general clinical-guideline excerpts, NOT facts about this patient: ' +
+		'cite them only for what a guideline recommends, always attribute the recommendation to its ' +
+		'named source, and never state one as something true of this patient. Fields named ' +
+		'documentFacts[n] came from a document uploaded for this patient.\n\n' +
+		'BE BRIEF. The physician has about 90 seconds. For a broad question ("what should I pay ' +
+		'attention to?", "what changed?"), give at most 4 points, most important first, each ONE ' +
+		'sentence with its citation. Prioritize: (1) values out of range or off a guideline goal, ' +
+		'(2) discrepancies between sources (e.g. a medication the patient reports that is not in the ' +
+		'chart), (3) safety items such as allergies, (4) what changed. Do not list normal values or ' +
+		'restate the chart. End with one short line naming what you can expand on. For a narrow ' +
+		'factual question ("what meds is he on?"), answer just that, completely and directly, with no ' +
+		'extras. Brevity never permits dropping a citation or a safety-relevant item: if something ' +
+		'important cannot fit, say so in uncertain_about. Always respond by calling submit_answer.\n\n' +
+		'Chart data (field_key: value):\n' +
+		chartBlock
+	);
+}
+
 export async function askAgent(
 	env: Env,
 	chart: PatientChart,
@@ -57,16 +84,7 @@ export async function askAgent(
 		.map(([key, value]) => `- ${key}: ${value}`)
 		.join('\n');
 
-	const system =
-		'You are a Clinical Co-Pilot embedded in OpenEMR, helping a physician between patient rooms. ' +
-		"You only know what is in the chart data below for THIS patient. Do not use outside medical " +
-		"knowledge to state facts about this patient. You may use general clinical knowledge only to " +
-		"explain why something might matter, clearly separated from chart facts. Fields named " +
-		"guidelineEvidence[n] are general clinical-guideline excerpts, NOT facts about this patient: " +
-		"cite them only for what a guideline recommends, always attribute the recommendation to its " +
-		"named source, and never state one as something true of this patient. Fields named " +
-		"documentFacts[n] came from a document uploaded for this patient. Always respond by " +
-		"calling submit_answer.\n\nChart data (field_key: value):\n" + chartBlock;
+	const system = buildSystemPrompt(chartBlock);
 
 	const messages = [
 		...history.map((h) => ({ role: h.role, content: h.content })),

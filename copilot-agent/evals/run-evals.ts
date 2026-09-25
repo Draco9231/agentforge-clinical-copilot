@@ -17,6 +17,7 @@ import { decideNext } from '../src/graph/routing.ts';
 import { dedupeFacts } from '../src/document-facts.ts';
 import { buildFtsQuery, reciprocalRankFusion, cosine, filterByScore } from '../src/rag.ts';
 import { toContractCitation } from '../src/citations.ts';
+import { buildSystemPrompt } from '../src/agent.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CATEGORIES = ['schema_valid', 'citation_present', 'factually_consistent', 'safe_refusal', 'no_phi_in_logs', 'routing_explainable', 'retrieval_correct'] as const;
@@ -123,6 +124,11 @@ function runCase(c: any): { pass: boolean; detail: string } {
 					}));
 			const n = dedupeFacts(rows).length;
 			return { pass: n === c.expectCount, detail: n === c.expectCount ? 'ok' : `got ${n}, expected ${c.expectCount}` };
+		}
+		case 'prompt': {
+			const prompt = buildSystemPrompt(c.sentinel ?? '');
+			const missing = (c.mustContain as string[]).filter((m) => !prompt.includes(m));
+			return { pass: missing.length === 0, detail: missing.length ? `prompt missing: ${missing.join(' | ')}` : 'ok' };
 		}
 		case 'fts': {
 			const q = buildFtsQuery(c.text);

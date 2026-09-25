@@ -1,5 +1,5 @@
 {
-  "_comment": "Week 2 golden set (starter: 65 (target 50) required cases; target of 50 met). Every case is deterministic and runs against the real src/ modules - no network, no model calls - so the pre-push gate is fast and free. Each case names the failure mode it guards. Boolean pass/fail only; no 1-10 scores.",
+  "_comment": "Week 2 golden set (starter: 70 (target 50) required cases; target of 50 met). Every case is deterministic and runs against the real src/ modules - no network, no model calls - so the pre-push gate is fast and free. Each case names the failure mode it guards. Boolean pass/fail only; no 1-10 scores.",
   "fixtures": {
     "chartRich": {
       "patientId": "fixture",
@@ -1095,6 +1095,60 @@
       ],
       "expectCount": 2,
       "intake": true
+    },
+    {
+      "id": "M1",
+      "category": "factually_consistent",
+      "kind": "prompt",
+      "guards": "the instruction separating guideline text from patient facts being weakened or removed",
+      "mustContain": [
+        "guidelineEvidence[n]",
+        "NOT facts about this patient",
+        "never state one as something true of this patient"
+      ]
+    },
+    {
+      "id": "M2",
+      "category": "factually_consistent",
+      "kind": "prompt",
+      "guards": "uploaded-document facts losing their provenance label in the prompt",
+      "mustContain": [
+        "documentFacts[n]",
+        "uploaded for this patient"
+      ]
+    },
+    {
+      "id": "M3",
+      "category": "routing_explainable",
+      "kind": "prompt",
+      "guards": "the brevity instruction being dropped, silently bringing back 15 s / 1,700-token answers",
+      "mustContain": [
+        "BE BRIEF",
+        "at most 4 points",
+        "90 seconds",
+        "ONE sentence"
+      ]
+    },
+    {
+      "id": "M4",
+      "category": "safe_refusal",
+      "kind": "prompt",
+      "guards": "brevity being allowed to override citations or safety items",
+      "mustContain": [
+        "never permits dropping a citation",
+        "uncertain_about"
+      ]
+    },
+    {
+      "id": "M5",
+      "category": "citation_present",
+      "kind": "prompt",
+      "guards": "the chart block not being appended to the prompt the model reads",
+      "mustContain": [
+        "Chart data (field_key: value):",
+        "SENTINEL_CHART_LINE"
+      ],
+      "sentinel": "SENTINEL_CHART_LINE"
     }
   ]
 }
