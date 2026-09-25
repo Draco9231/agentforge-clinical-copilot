@@ -18,6 +18,7 @@ import { dedupeFacts } from '../src/document-facts.ts';
 import { buildFtsQuery, reciprocalRankFusion, cosine, filterByScore } from '../src/rag.ts';
 import { toContractCitation } from '../src/citations.ts';
 import { buildSystemPrompt } from '../src/agent.ts';
+import { buildJudgeMessages } from '../src/judge.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CATEGORIES = ['schema_valid', 'citation_present', 'factually_consistent', 'safe_refusal', 'no_phi_in_logs', 'routing_explainable', 'retrieval_correct'] as const;
@@ -124,6 +125,14 @@ function runCase(c: any): { pass: boolean; detail: string } {
 					}));
 			const n = dedupeFacts(rows).length;
 			return { pass: n === c.expectCount, detail: n === c.expectCount ? 'ok' : `got ${n}, expected ${c.expectCount}` };
+		}
+		case 'judgeprompt': {
+			const fields = { 'medications[0]': 'Metformin', 'medications[1]': 'Atorvastatin' };
+			const m = buildJudgeMessages(fields, c.claims.map((claim: string) => ({ claim, source_field: 'medications[0]' })));
+			const problems: string[] = [];
+			if (m.user.includes('Full chart') !== c.expectFullChart) problems.push(`full chart ${m.user.includes('Full chart') ? 'present' : 'absent'}, expected ${c.expectFullChart ? 'present' : 'absent'}`);
+			for (const x of c.systemMustContain ?? []) if (!m.system.includes(x)) problems.push(`judge system prompt missing "${x}"`);
+			return { pass: problems.length === 0, detail: problems.join('; ') || 'ok' };
 		}
 		case 'prompt': {
 			const prompt = buildSystemPrompt(c.sentinel ?? '');

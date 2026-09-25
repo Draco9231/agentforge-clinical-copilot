@@ -498,6 +498,34 @@
       "pass": true,
       "detail": "ok",
       "guards": "the chart block not being appended to the prompt the model reads"
+    },
+    {
+      "id": "J1",
+      "category": "factually_consistent",
+      "pass": true,
+      "detail": "ok",
+      "guards": "a correct absence claim (an intake medication missing from the chart) being flagged and downgrading the answer (seen live)"
+    },
+    {
+      "id": "J2",
+      "category": "factually_consistent",
+      "pass": true,
+      "detail": "ok",
+      "guards": "a cross-field comparison being judged against only one field"
+    },
+    {
+      "id": "J3",
+      "category": "factually_consistent",
+      "pass": true,
+      "detail": "ok",
+      "guards": "every plain claim paying for the full chart (cost and latency creep)"
+    },
+    {
+      "id": "J4",
+      "category": "safe_refusal",
+      "pass": true,
+      "detail": "ok",
+      "guards": "the absence rule being added without keeping the judge strict about misstatements"
     }
   ]
 }

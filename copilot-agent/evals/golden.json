@@ -1,5 +1,5 @@
 {
-  "_comment": "Week 2 golden set (starter: 70 (target 50) required cases; target of 50 met). Every case is deterministic and runs against the real src/ modules - no network, no model calls - so the pre-push gate is fast and free. Each case names the failure mode it guards. Boolean pass/fail only; no 1-10 scores.",
+  "_comment": "Week 2 golden set (starter: 74 (target 50) required cases; target of 50 met). Every case is deterministic and runs against the real src/ modules - no network, no model calls - so the pre-push gate is fast and free. Each case names the failure mode it guards. Boolean pass/fail only; no 1-10 scores.",
   "fixtures": {
     "chartRich": {
       "patientId": "fixture",
@@ -1124,9 +1124,11 @@
       "guards": "the brevity instruction being dropped, silently bringing back 15 s / 1,700-token answers",
       "mustContain": [
         "BE BRIEF",
-        "at most 4 points",
+        "at most 4",
+        "under 110 words",
         "90 seconds",
-        "ONE sentence"
+        "ONE short sentence",
+        "at most 8 words"
       ]
     },
     {
@@ -1136,7 +1138,8 @@
       "guards": "brevity being allowed to override citations or safety items",
       "mustContain": [
         "never permits dropping a citation",
-        "uncertain_about"
+        "uncertain_about",
+        "fewer, tighter claims"
       ]
     },
     {
@@ -1149,6 +1152,51 @@
         "SENTINEL_CHART_LINE"
       ],
       "sentinel": "SENTINEL_CHART_LINE"
+    },
+    {
+      "id": "J1",
+      "category": "factually_consistent",
+      "kind": "judgeprompt",
+      "guards": "a correct absence claim (an intake medication missing from the chart) being flagged and downgrading the answer (seen live)",
+      "claims": [
+        "Ibuprofen not listed among chart's active medications (only Metformin and Atorvastatin)"
+      ],
+      "expectFullChart": true
+    },
+    {
+      "id": "J2",
+      "category": "factually_consistent",
+      "kind": "judgeprompt",
+      "guards": "a cross-field comparison being judged against only one field",
+      "claims": [
+        "A1c high despite Metformin"
+      ],
+      "expectFullChart": true
+    },
+    {
+      "id": "J3",
+      "category": "factually_consistent",
+      "kind": "judgeprompt",
+      "guards": "every plain claim paying for the full chart (cost and latency creep)",
+      "claims": [
+        "A1c is 7.8%",
+        "Penicillin allergy with hives"
+      ],
+      "expectFullChart": false
+    },
+    {
+      "id": "J4",
+      "category": "safe_refusal",
+      "kind": "judgeprompt",
+      "guards": "the absence rule being added without keeping the judge strict about misstatements",
+      "claims": [
+        "Ibuprofen not listed among chart's active medications"
+      ],
+      "expectFullChart": true,
+      "systemMustContain": [
+        "Still flag any claim that misstates",
+        "full chart"
+      ]
     }
   ]
 }

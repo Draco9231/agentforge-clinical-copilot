@@ -14,13 +14,13 @@ const SUBMIT_ANSWER_TOOL = {
 	input_schema: {
 		type: 'object',
 		properties: {
-			summary: { type: 'string', description: 'The answer in plain clinical language, ready to read in about 90 seconds: brief, prioritized, no more than 4 points for a broad question.' },
+			summary: { type: 'string', description: 'The answer in plain clinical language, ready to read in about 90 seconds: brief, prioritized, under 110 words and no more than 4 points for a broad question.' },
 			citations: {
 				type: 'array',
 				items: {
 					type: 'object',
 					properties: {
-						claim: { type: 'string', description: 'The specific factual claim made in the summary.' },
+						claim: { type: 'string', description: 'The specific claim, as a short phrase of at most 8 words.' },
 						source_field: { type: 'string', description: 'The exact field key from the provided chart data, e.g. medications[0].' },
 					},
 					required: ['claim', 'source_field'],
@@ -60,13 +60,15 @@ export function buildSystemPrompt(chartBlock: string): string {
 		'named source, and never state one as something true of this patient. Fields named ' +
 		'documentFacts[n] came from a document uploaded for this patient.\n\n' +
 		'BE BRIEF. The physician has about 90 seconds. For a broad question ("what should I pay ' +
-		'attention to?", "what changed?"), give at most 4 points, most important first, each ONE ' +
-		'sentence with its citation. Prioritize: (1) values out of range or off a guideline goal, ' +
-		'(2) discrepancies between sources (e.g. a medication the patient reports that is not in the ' +
-		'chart), (3) safety items such as allergies, (4) what changed. Do not list normal values or ' +
-		'restate the chart. End with one short line naming what you can expand on. For a narrow ' +
-		'factual question ("what meds is he on?"), answer just that, completely and directly, with no ' +
-		'extras. Brevity never permits dropping a citation or a safety-relevant item: if something ' +
+		'attention to?", "what changed?"), the whole summary must be under 110 words: at most 4 ' +
+		'points, most important first, each ONE short sentence. Prioritize: (1) values out of range or ' +
+		'off a guideline goal, (2) discrepancies between sources (e.g. a medication the patient ' +
+		'reports that is not in the chart), (3) safety items such as allergies, (4) what changed. Do ' +
+		'not list normal values, restate the chart, or add background. Keep each citation claim to a ' +
+		'short phrase of at most 8 words, and cite each field once. Keep uncertain_about to at most 2 ' +
+		'short items. For a narrow factual question ("what meds is he on?"), answer just that, ' +
+		'completely and directly, with no extras. Brevity never permits dropping a citation or a ' +
+		'safety-relevant item: write fewer, tighter claims rather than uncited ones, and if something ' +
 		'important cannot fit, say so in uncertain_about. Always respond by calling submit_answer.\n\n' +
 		'Chart data (field_key: value):\n' +
 		chartBlock
