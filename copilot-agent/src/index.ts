@@ -80,6 +80,17 @@ function cors(res: Response): Response {
 	return new Response(res.body, { status: res.status, headers });
 }
 
+// Same gate /api/chat uses: the caller's own OpenEMR token must be able to read the patient's
+// FHIR record. Returns a Response to send back when it cannot, or null when access is fine.
+async function denyUnlessPatientReadable(env: Env, auth: string, patientId: string): Promise<Response | null> {
+	const access = await fetch(`${env.OPENEMR_BASE_URL}/apis/${env.OPENEMR_API_SITE}/fhir/Patient/${encodeURIComponent(patientId)}`, {
+		headers: { Authorization: auth, Accept: 'application/fhir+json' },
+	});
+	if (access.status === 401) return cors(new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 }));
+	if (!access.ok) return cors(new Response(JSON.stringify({ error: 'forbidden' }), { status: 403 }));
+	return null;
+}
+
 async function checkReady(env: Env): Promise<{ ready: boolean; checks: Record<string, string> }> {
 	const checks: Record<string, string> = {};
 
@@ -373,6 +384,47 @@ location.replace('/');
 			);
 		}
 
+		// What is on file for this patient: one entry per uploaded document with its extracted facts,
+		// so the UI can show it after a reload or on another day (upload cards used to exist only in
+		// the browser session). Same OpenEMR chart-read gate as everything else.
+		if (url.pathname === '/api/documents' && request.method === 'GET') {
+			const auth = request.headers.get('Authorization');
+			if (!auth) return cors(new Response(JSON.stringify({ error: 'missing Authorization' }), { status: 401 }));
+			const patientId = url.searchParams.get('patientId');
+			if (!patientId) return cors(new Response(JSON.stringify({ error: 'patientId is required' }), { status: 400 }));
+			const denied = await denyUnlessPatientReadable(env, auth, patientId);
+			if (denied) return denied;
+			try {
+				const docs = await env.DB.prepare(
+					`SELECT d.id AS id, d.doc_type AS docType, d.file_name AS fileName, d.extraction_confidence AS confidence,
+					        d.openemr_upload_ok AS openemrUploadOk, d.created_at AS createdAt,
+					        (SELECT COUNT(*) FROM document_files f WHERE f.document_id = d.id) AS hasFile
+					 FROM documents d WHERE d.patient_id = ? ORDER BY d.created_at DESC LIMIT 50`,
+				)
+					.bind(patientId)
+					.all<{ id: string; docType: string; fileName: string; confidence: string; openemrUploadOk: number; createdAt: string; hasFile: number }>();
+				const facts = await env.DB.prepare(
+					'SELECT document_id AS documentId, fact_json AS factJson FROM document_facts WHERE document_id IN (SELECT id FROM documents WHERE patient_id = ?) ORDER BY rowid',
+				)
+					.bind(patientId)
+					.all<{ documentId: string; factJson: string }>();
+				const byDoc = new Map<string, unknown[]>();
+				for (const f of facts.results) {
+					try {
+						const arr = byDoc.get(f.documentId) ?? [];
+						arr.push(JSON.parse(f.factJson));
+						byDoc.set(f.documentId, arr);
+					} catch {
+						// A malformed stored fact is skipped rather than failing the whole list.
+					}
+				}
+				const documents = docs.results.map((d) => ({ ...d, openemrUploadOk: !!d.openemrUploadOk, hasFile: !!d.hasFile, facts: byDoc.get(d.id) ?? [] }));
+				return cors(new Response(JSON.stringify({ documents }), { headers: { 'content-type': 'application/json' } }));
+			} catch {
+				return cors(new Response(JSON.stringify({ error: 'could not load documents' }), { status: 500 }));
+			}
+		}
+
 		// Click-to-source: serve the stored PDF so the UI can render the cited page and highlight
 		// the quote. Authorization mirrors /api/chat — the caller's own OpenEMR token must be able to
 		// read this patient's FHIR record, so a user OpenEMR would deny never receives the file.
@@ -386,11 +438,8 @@ location.replace('/');
 				.bind(fileMatch[1])
 				.first<{ patientId: string; data: ArrayBuffer | number[]; contentType: string }>();
 			if (!doc) return cors(new Response(JSON.stringify({ error: 'document not found' }), { status: 404 }));
-			const access = await fetch(`${env.OPENEMR_BASE_URL}/apis/${env.OPENEMR_API_SITE}/fhir/Patient/${encodeURIComponent(doc.patientId)}`, {
-				headers: { Authorization: auth, Accept: 'application/fhir+json' },
-			});
-			if (access.status === 401) return cors(new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 }));
-			if (!access.ok) return cors(new Response(JSON.stringify({ error: 'forbidden' }), { status: 403 }));
+			const denied = await denyUnlessPatientReadable(env, auth, doc.patientId);
+			if (denied) return denied;
 			return cors(new Response(new Uint8Array(doc.data as ArrayBuffer | number[]), { headers: { 'content-type': doc.contentType, 'cache-control': 'private, no-store' } }));
 		}
 

@@ -65,6 +65,15 @@ export function renderChatPage(openemrBaseUrl: string, apiSite: string): string 
   .viewer-page { position: relative; display: inline-block; box-shadow: 0 1px 6px rgba(0,0,0,0.25); background: #fff; }
   .viewer-page canvas { display: block; }
   .hl { position: absolute; background: rgba(255, 221, 0, 0.42); outline: 2px solid #e6a800; border-radius: 2px; pointer-events: none; }
+  .doc-bar { padding: 0.5rem 1rem; border-bottom: 1px solid #eee; background: #fff; font-size: 0.8rem; }
+  .doc-bar-title { color: #666; font-weight: 600; margin-bottom: 0.35rem; }
+  .doc-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .doc-chip { display: inline-flex; align-items: center; gap: 0.35rem; border: 1px solid #d5daf0; background: #f4f6ff; color: #223; border-radius: 16px; padding: 0.25rem 0.7rem; cursor: pointer; font-size: 0.78rem; }
+  .doc-chip:hover, .doc-chip.open { background: #e6ebff; border-color: #2b5fd9; }
+  .doc-chip .sub { color: #667; }
+  .doc-panel { max-height: 40vh; overflow-y: auto; margin-top: 0.5rem; }
+  .doc-panel .msg.document { margin: 0.3rem 0; }
+  .doc-actions { margin: 0.2rem 0 0.5rem; }
   .composer { display: flex; gap: 0.5rem; padding: 0.75rem; border-top: 1px solid #eee; }
   .composer textarea { flex: 1; resize: none; padding: 0.55rem; border: 1px solid #ddd; border-radius: 6px; }
   .composer button { align-self: flex-end; }
@@ -123,6 +132,7 @@ export function renderChatPage(openemrBaseUrl: string, apiSite: string): string 
       <button id="uploadBtn" onclick="uploadLabPdf()">Upload</button>
       <span id="uploadStatus" class="upload-status"></span>
     </div>
+    <div id="docBar" class="doc-bar"></div>
     <div id="messages" class="messages"></div>
     <div class="composer">
       <textarea id="message" rows="2" placeholder="Ask about this patient's meds, conditions, recent labs..." onkeydown="handleComposerKey(event)"></textarea>
@@ -266,6 +276,9 @@ async function selectPatient(id) {
     await loadHistory(id);
   }
   if (activePatientId === id) renderMessages(id);
+  openDocId = null;
+  if (docsByPatient[id]) renderDocBar(id);
+  loadDocuments(id);
 }
 
 // Every message is already persisted server-side per (user, patient) — this pulls it back so a
@@ -366,6 +379,7 @@ async function uploadLabPdf() {
     const session = sessions[id];
     session.messages.push({ role: 'document', text: file.name, meta: body, createdAt: nowStamp() });
     if (activePatientId === id) renderMessages(id);
+    loadDocuments(id);
   } catch (e) {
     statusEl.textContent = 'Upload failed.';
   } finally {
@@ -464,7 +478,10 @@ async function openSource(cite) {
       box.style.height = h + 'px';
       pageEl.appendChild(box);
     });
-    if (mode === 'exact') {
+    if (!quote) {
+      status.className = 'viewer-status';
+      status.textContent = 'Page ' + pageNum + ' of ' + pdf.numPages + ' — original uploaded document.';
+    } else if (mode === 'exact') {
       status.className = 'viewer-status ok';
       status.textContent = 'Page ' + pageNum + ' — quoted text found in the document and highlighted: “' + cite.quote_or_value + '”';
     } else if (mode === 'partial') {
@@ -477,6 +494,74 @@ async function openSource(cite) {
   } catch (e) {
     status.className = 'viewer-status warn';
     status.textContent = 'Could not open the source: ' + (e && e.message ? e.message : e);
+  }
+}
+
+// ---- Documents on file: what has been uploaded for the active patient (persisted server-side) ----
+const docsByPatient = {};   // patientId -> [{ id, docType, fileName, confidence, createdAt, hasFile, facts }]
+let openDocId = null;
+
+function docLabel(t) { return t === 'intake_form' ? 'Intake form' : 'Lab report'; }
+function docIcon(t) { return t === 'intake_form' ? '&#128221;' : '&#129514;'; }
+function fmtDate(s) { return String(s || '').slice(0, 10); }
+
+async function loadDocuments(id) {
+  try {
+    const res = await fetch('/api/documents?patientId=' + encodeURIComponent(id), { headers: { Authorization: 'Bearer ' + token } });
+    if (res.status === 401) { sessionExpired(); return; }
+    docsByPatient[id] = res.ok ? ((await res.json()).documents || []) : [];
+  } catch (e) {
+    docsByPatient[id] = [];
+  }
+  if (activePatientId === id) renderDocBar(id);
+}
+
+function metaFromDoc(d) {
+  const meta = { doc_type: d.docType, extraction_confidence: d.confidence, openemrUploadOk: d.openemrUploadOk, documentId: d.id };
+  if (d.docType === 'lab_pdf') { meta.results = d.facts; return meta; }
+  meta.demographics = []; meta.current_medications = []; meta.allergies = []; meta.family_history = [];
+  d.facts.forEach(function (f) {
+    if (f.category === 'demographics') meta.demographics.push({ field: f.label, value: f.value, citation: f.citation });
+    else if (f.category === 'chief_concern') meta.chief_concern = { text: f.value, citation: f.citation };
+    else if (f.category === 'medication') meta.current_medications.push({ name: f.label, dose: f.value, frequency: null, citation: f.citation });
+    else if (f.category === 'allergy') meta.allergies.push({ substance: f.label, reaction: f.value, citation: f.citation });
+    else if (f.category === 'family_history') meta.family_history.push({ condition: f.label, relative: f.value, citation: f.citation });
+  });
+  return meta;
+}
+
+function renderDocBar(id) {
+  const bar = document.getElementById('docBar');
+  const docs = docsByPatient[id] || [];
+  if (!docs.length) {
+    bar.innerHTML = '<div class="doc-bar-title">Documents on file</div><div class="hint">No lab reports or intake forms uploaded for this patient yet.</div>';
+    return;
+  }
+  bar.innerHTML = '<div class="doc-bar-title">Documents on file (' + docs.length + ') &mdash; click one to see what was extracted</div>' +
+    '<div class="doc-chips"></div><div id="docPanel" class="doc-panel"></div>';
+  const chips = bar.querySelector('.doc-chips');
+  docs.forEach(function (d) {
+    const chip = document.createElement('span');
+    chip.className = 'doc-chip' + (openDocId === d.id ? ' open' : '');
+    chip.innerHTML = docIcon(d.docType) + ' <b>' + docLabel(d.docType) + '</b> <span class="sub"></span>';
+    chip.querySelector('.sub').textContent = d.fileName + ' · ' + fmtDate(d.createdAt) + ' · ' + d.facts.length + (d.facts.length === 1 ? ' fact' : ' facts');
+    chip.onclick = function () { openDocId = openDocId === d.id ? null : d.id; renderDocBar(id); };
+    chips.appendChild(chip);
+  });
+  const open = docs.find(function (d) { return d.id === openDocId; });
+  if (open) {
+    const panel = document.getElementById('docPanel');
+    if (open.hasFile) {
+      const actions = document.createElement('div');
+      actions.className = 'doc-actions';
+      const link = document.createElement('span');
+      link.className = 'src-link';
+      link.textContent = 'View the original PDF';
+      link.onclick = function () { openSource({ source_type: open.docType, source_id: open.id, page_or_section: '1', quote_or_value: '' }); };
+      actions.appendChild(link);
+      panel.appendChild(actions);
+    }
+    renderDocumentCard(panel, open.fileName, metaFromDoc(open));
   }
 }
 
