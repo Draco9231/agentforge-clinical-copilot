@@ -418,7 +418,17 @@ location.replace('/');
 						// A malformed stored fact is skipped rather than failing the whole list.
 					}
 				}
-				const documents = docs.results.map((d) => ({ ...d, openemrUploadOk: !!d.openemrUploadOk, hasFile: !!d.hasFile, facts: byDoc.get(d.id) ?? [] }));
+				// Re-uploading the same file is common (testing, retries). Show only the newest copy of
+				// each (type, file name); older rows stay in D1 as the audit trail and are still deduped
+				// when their facts reach the answer model (document-facts.ts).
+				const seenDocs = new Set<string>();
+				const latestDocs = docs.results.filter((d) => {
+					const key = `${d.docType}|${d.fileName.toLowerCase()}`;
+					if (seenDocs.has(key)) return false;
+					seenDocs.add(key);
+					return true;
+				});
+				const documents = latestDocs.map((d) => ({ ...d, openemrUploadOk: !!d.openemrUploadOk, hasFile: !!d.hasFile, facts: byDoc.get(d.id) ?? [] }));
 				return cors(new Response(JSON.stringify({ documents }), { headers: { 'content-type': 'application/json' } }));
 			} catch {
 				return cors(new Response(JSON.stringify({ error: 'could not load documents' }), { status: 500 }));
