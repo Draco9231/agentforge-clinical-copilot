@@ -16,8 +16,8 @@ Pricing: Claude Sonnet 5 at $2 / $10 per million input / output tokens (see AI_C
 
 Not included: Claude Code / IDE usage, Langfuse Cloud, Railway. The live extraction eval
 (`npm run eval:live`, run 2026-09-25) cost a further $0.044 (lab $0.0201, intake $0.0239); its
-extraction times (12.4 s and 9.7 s) are from a local machine, so they include a slower path than
-the Worker's.
+extraction times (12.4 s and 9.7 s) were measured from a local machine, not the Worker; the
+Worker's production p50s are 7.3 s (lab) and 10.0 s (intake).
 
 ## 2. Cost per operation (measured)
 

@@ -69,6 +69,26 @@ question, and point at the little citation/source tags under the answer — that
   stand-in), a full automated test suite, monitoring dashboards, and load testing under many
   simultaneous users — all planned, all documented, none skipped by accident.
 
+**Say this explicitly on camera — don't skip it:** two of the required pieces are *partially*
+done today, and it's worth naming exactly what's there and what isn't, rather than implying
+they're finished:
+
+- **"Observability is wired in, but partially."** Every single request gets a unique ID that
+  ties together every log line, every tool call, and every AI call for that request, stored in a
+  real database — so if something goes wrong, we can trace exactly what happened. What's *not*
+  done yet: a visual dashboard and the automated alerts (e.g. "page someone if error rate spikes")
+  that the full spec calls for. Today it's real structured logs; tomorrow it's a dashboard on top
+  of them.
+- **"The eval framework exists, but it's a starting point, not the full suite."** We have five
+  automated tests that specifically try to break the safety mechanism — a fabricated fact, a
+  patient with no chart data, malformed input — and they all pass. We also manually verified the
+  failure modes (no login, OpenEMR down, bad request) against the live deployment. What's *not*
+  done yet: testing with two different real user accounts to prove access control (not just
+  designed that way), and testing against many concurrent users at once.
+
+Framing it this way — "here's exactly what's real today, here's exactly what's next" — is a
+stronger demo than claiming everything's finished. It shows you know the difference.
+
 ## Suggested demo flow to record
 
 1. Show the deployed OpenEMR app briefly (it's the "before" — clicking around a normal EHR).
