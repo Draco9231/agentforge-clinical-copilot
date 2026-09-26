@@ -9,14 +9,15 @@ Cloudflare Worker + D1 as Week 1; OpenEMR (Railway) remains the system of record
 | Capability | State |
 |---|---|
 | Lab PDF ingestion + strict-schema extraction with per-fact citations | **Built, live-verified** |
-| Intake form ingestion (demographics, chief concern, meds, allergies, family history) | **Built, deployed; live extraction not yet run** |
+| Intake form ingestion (demographics, chief concern, meds, allergies, family history) | **Built, live-verified** (2 production extractions; accuracy vs ground truth not yet graded) |
 | Source PDF stored in OpenEMR | **Built, best-effort** (F-2: cannot be read back; category unverifiable) |
 | Supervisor + `intake_extractor` + `evidence_retriever` (LangGraph.js) | **Built** |
 | Hybrid RAG (FTS5 + embeddings, RRF, reranker) over a 14-chunk guideline corpus | **Built; retrieval verified live, end-to-end chat not yet observed** |
 | Unified citation contract on every cited claim in the answer | **Built** |
-| Eval gate: 65 cases, 7 categories, boolean rubrics, pre-push hook | **Built, sabotage-tested** |
+| Eval gate: 74 cases, 7 categories, boolean rubrics, pre-push hook + GitHub Actions job | **Built, sabotage-tested** (hook); CI job added 2026-09-25, becomes PR-blocking once set as a required check |
 | Live-model eval tier (extraction vs ground truth, quote grounding) | **Built; not yet run** (needs a real API key in `.dev.vars`) |
-| Visual PDF bounding-box / click-to-source UI | **Not built** |
+| Click-to-source viewer: cited PDF page rendered with the quote highlighted | **Built** (pdf.js, text-layer boxes; verified in a local harness, no text layer = warning only) |
+| Cost and latency report | **Written**: [COST_LATENCY_REPORT.md](./COST_LATENCY_REPORT.md); post-concise-prompt latency not yet measured |
 | Writing intake medications/allergies back into OpenEMR records | **Not built** (deliberate; see Risks) |
 
 ## Summary
@@ -31,7 +32,7 @@ physician later asks a question, a rule-based supervisor decides which workers a
 `intake_extractor` loads the patient's extracted document facts into the same chart the model
 reads and the verifier checks, so they are citable and verified exactly like OpenEMR data;
 `evidence_retriever` runs hybrid retrieval (keyword + embedding candidates, rank fusion, reranker)
-over a small guideline corpus. Every handoff is logged with a reason. A 65-case offline eval runs
+over a small guideline corpus. Every handoff is logged with a reason. A 74-case offline eval runs
 on every `git push` and blocks it if any rubric category falls below 95% or regresses more than 5%
 from baseline; a separate live-model tier checks extraction against ground truth.
 
@@ -142,13 +143,35 @@ full `{source_type, source_id, page_or_section, field_or_chunk_id, quote_or_valu
 server-side for every citation that survived verification — from the stored extraction citation
 (uploaded documents), the retrieved chunk (guidelines), or the flattened FHIR field (OpenEMR data).
 The model never authors provenance. It is added to the `/api/chat` response additively, so the
-Week 1 `{claim, source_field}` shape the UI reads is unchanged. Not yet built: rendering it as a
-click-to-source panel or a PDF bounding-box overlay.
+Week 1 `{claim, source_field}` shape the UI reads is unchanged. The UI renders it as click-to-source (next section).
+
+## Click-to-source viewer
+
+Every extracted-fact citation line in an upload card, and every source chip under a chat answer
+that points at an uploaded document, opens a modal showing the cited PDF page with the quoted text
+highlighted.
+
+- **Storage.** The Worker keeps the uploaded PDF in D1 (`document_files`, BLOB, capped at 1.8 MB
+  because D1 rows are limited to 2 MB), because OpenEMR's copy cannot be read back (F-2). R2 is the
+  next step for larger files.
+- **Serving.** `GET /api/documents/:id/file` returns the bytes only if the caller's own OpenEMR
+  token can read that patient's FHIR record (the same gate `/api/chat` uses), so a user OpenEMR
+  denies never receives the file.
+- **Rendering.** pdf.js (cdnjs, worker loaded through a blob URL) draws the page named in the
+  citation's `page_or_section`.
+- **Bounding boxes.** Computed in the browser from the PDF text layer: the quote and each text run
+  are normalised (lower-case, punctuation collapsed) and the runs overlapping the match are boxed
+  using the page transform. Three outcomes are shown: quote found (green, highlighted), only part
+  found (amber), not found or no text layer (amber, "treat as unverified").
+- **This is also a grounding check** at view time, closing part of Risk 1: an ungrounded quote is
+  visible to the physician instead of silently trusted. It is not enforced on the server, and it
+  does not work for scanned image PDFs (no text layer); a server-side check and OCR-based boxes are
+  the next step.
 
 ## Eval gate
 
 **Offline gate (every push).**
-- `evals/golden.json`: 65 deterministic cases (target was 50), each naming the failure mode it
+- `evals/golden.json`: 74 deterministic cases (target was 50), each naming the failure mode it
   guards. Categories: `schema_valid` (12), `citation_present` (13), `factually_consistent` (10),
   `safe_refusal` (6), `no_phi_in_logs` (7), `routing_explainable` (8), `retrieval_correct` (9).
 - `evals/run-evals.ts` runs them against the real `src/` modules — no network, no model calls
@@ -156,6 +179,9 @@ click-to-source panel or a PDF bounding-box overlay.
   5% from `evals/baseline.json`, or a case throws.
 - `.githooks/pre-push` runs `npm test` then `npm run eval`. Install once per clone with
   `npm run hooks:install`.
+- `.github/workflows/agent-eval-gate.yml` runs typecheck, `npm test` and `npm run eval` on every
+  pull request and push to `main` that touches `copilot-agent/`. Unlike the hook it cannot be
+  skipped with `--no-verify`; mark it a required status check on `main` to make it merge-blocking.
 - **Evidence it blocks:** replacing the verifier's citation-existence check with `true` failed
   three categories, named four cases, and the hook exited 1; restoring the file returned exit 0.
   The hook has run on every real push since.
@@ -231,9 +257,10 @@ p50/p95 latency for the Week 2 steps (see the cost and latency report, still to 
    redaction, routing, retrieval math, dedupe) cannot regress silently. It does not measure live
    extraction accuracy or answer quality; a bad prompt change would not fail it. The on-demand live
    tier addresses this but has not been run, and is not wired into the hook (cost, network).
-3. **The hook is local.** It is not versioned into `.git/hooks`, must be installed per clone, and
-   can be bypassed with `--no-verify`. No server-side GitLab CI job is configured, so it is not
-   enforced at merge.
+3. **The hook is local; the CI job needs a branch rule.** The hook must be installed per clone and
+   can be bypassed with `--no-verify`. The GitHub Actions job runs the same gate server-side, but
+   it only blocks merges once it is set as a required check in the repository's branch protection
+   settings, which is a repository setting, not code. The GitLab remote has no pipeline.
 4. **Rule-based routing is brittle to phrasing.** The evidence regex will miss a guidance
    question worded unusually and over-trigger on some recall questions. The cost of a miss is a
    less-grounded answer, not an unsafe one; the routing eval cases are the guard as it evolves.

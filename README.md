@@ -47,19 +47,26 @@ code + PKCE), picks a patient, and asks questions answered only from that patien
 every claim source-cited and verified. Docs: [ARCHITECTURE.md](./ARCHITECTURE.md),
 [AUDIT.md](./AUDIT.md), [USERS.md](./USERS.md), [KEY_METRICS.md](./KEY_METRICS.md).
 
-**Week 2 (multimodal evidence agent):** upload a lab PDF -> structured, cited extraction; a
-supervisor routes each question to workers before answering; a pre-push eval gate blocks
-regressions. Docs: [W2_ARCHITECTURE.md](./W2_ARCHITECTURE.md) (start with its status table - it
-states what is built and what is not).
+**Week 2 (multimodal evidence agent):** upload a lab PDF or an intake form -> structured, cited
+extraction; a supervisor routes each question to an `intake_extractor` and an `evidence_retriever`
+(hybrid RAG + rerank over a guideline corpus) before answering; every citation is click-to-source
+(the cited PDF page opens with the quoted text highlighted); a 74-case eval gate blocks
+regressions locally (pre-push hook) and server-side (GitHub Actions). Docs:
+[W2_ARCHITECTURE.md](./W2_ARCHITECTURE.md) (start with its status table - it states what is built
+and what is not), [COST_LATENCY_REPORT.md](./COST_LATENCY_REPORT.md),
+[KEY_METRICS.md](./KEY_METRICS.md).
 
 **Run the Week 2 flow (no guessing):**
 1. Open https://clinical-copilot-agent.genesysx.workers.dev and log in with OpenEMR.
-2. Pick a patient (e.g. James Chen), click *Choose File*, select
-   `copilot-agent/samples/sample-lab-report.pdf`, click *Upload Lab PDF*.
-3. Ask "Summarize his recent labs" or "What should I pay attention to?" - the answer cites the
-   uploaded values and shows the supervisor's routing line.
-4. Run the eval gate locally: `cd copilot-agent && npm install && npm run eval`.
-5. Enable the push-blocking hook once per clone: `npm run hooks:install`.
+2. Pick a patient (e.g. James Chen), choose *Lab PDF* (or *Intake form*), select
+   `copilot-agent/samples/sample-lab-report.pdf` (or `sample-intake-form.pdf`), click *Upload*.
+3. Click any grey citation line under an extracted value: the source PDF opens on the cited page
+   with the quoted text highlighted (or a warning if the quote is not on that page).
+4. Ask "Summarize his recent labs" or "What should I pay attention to?" - the answer cites the
+   uploaded values and guideline evidence, shows the supervisor's routing line, and its source
+   chips open the same viewer.
+5. Run the eval gate locally: `cd copilot-agent && npm install && npm run eval`.
+6. Enable the push-blocking hook once per clone: `npm run hooks:install`.
 
 **Environment (Worker `copilot-agent/`)** - vars in `wrangler.jsonc`: `OPENEMR_BASE_URL`,
 `OPENEMR_API_SITE`, `OPENEMR_CLIENT_ID`, `LANGFUSE_HOST`. Secrets (`wrangler secret put`):

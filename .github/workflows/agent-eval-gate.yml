@@ -1,0 +1,35 @@
+name: Agent eval gate
+
+# Server-side counterpart of copilot-agent/.githooks/pre-push. The local hook can be skipped with
+# --no-verify; this job cannot. Mark it as a required status check on main to make it PR-blocking.
+# The offline suite needs no network and no API keys (see W2_ARCHITECTURE.md, "Eval gate").
+on:
+  pull_request:
+    paths: ['copilot-agent/**', '.github/workflows/agent-eval-gate.yml']
+  push:
+    branches: [main]
+    paths: ['copilot-agent/**', '.github/workflows/agent-eval-gate.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  eval-gate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: copilot-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: copilot-agent/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npm test
+      - name: Eval gate (fails on any category < 95% or > 5% regression vs baseline)
+        run: npm run eval
