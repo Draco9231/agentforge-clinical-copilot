@@ -70,6 +70,8 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
 	return btoa(binary);
 }
 
+const MAX_STORED_PDF_BYTES = 1_800_000;
+
 function cors(res: Response): Response {
 	const headers = new Headers(res.headers);
 	headers.set('Access-Control-Allow-Origin', '*');
@@ -337,6 +339,11 @@ location.replace('/');
 				)
 					.bind(documentId, patientId, openemrUserId, docType, file.name, openemrUploadOk ? 1 : 0, extraction.extraction_confidence, correlationId)
 					.run();
+				if (fileBytes.byteLength <= MAX_STORED_PDF_BYTES) {
+					await env.DB.prepare('INSERT INTO document_files (document_id, content_type, size_bytes, data) VALUES (?, ?, ?, ?)')
+						.bind(documentId, 'application/pdf', fileBytes.byteLength, fileBytes)
+						.run();
+				}
 				if (factJson.length > 0) {
 					await env.DB.batch(
 						factJson.map((f) =>
@@ -364,6 +371,27 @@ location.replace('/');
 					headers: { 'content-type': 'application/json' },
 				}),
 			);
+		}
+
+		// Click-to-source: serve the stored PDF so the UI can render the cited page and highlight
+		// the quote. Authorization mirrors /api/chat — the caller's own OpenEMR token must be able to
+		// read this patient's FHIR record, so a user OpenEMR would deny never receives the file.
+		const fileMatch = /^\/api\/documents\/([0-9a-f-]{36})\/file$/.exec(url.pathname);
+		if (fileMatch && request.method === 'GET') {
+			const auth = request.headers.get('Authorization');
+			if (!auth) return cors(new Response(JSON.stringify({ error: 'missing Authorization' }), { status: 401 }));
+			const doc = await env.DB.prepare(
+				'SELECT d.patient_id AS patientId, f.data AS data, f.content_type AS contentType FROM documents d JOIN document_files f ON f.document_id = d.id WHERE d.id = ?',
+			)
+				.bind(fileMatch[1])
+				.first<{ patientId: string; data: ArrayBuffer | number[]; contentType: string }>();
+			if (!doc) return cors(new Response(JSON.stringify({ error: 'document not found' }), { status: 404 }));
+			const access = await fetch(`${env.OPENEMR_BASE_URL}/apis/${env.OPENEMR_API_SITE}/fhir/Patient/${encodeURIComponent(doc.patientId)}`, {
+				headers: { Authorization: auth, Accept: 'application/fhir+json' },
+			});
+			if (access.status === 401) return cors(new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 }));
+			if (!access.ok) return cors(new Response(JSON.stringify({ error: 'forbidden' }), { status: 403 }));
+			return cors(new Response(new Uint8Array(doc.data as ArrayBuffer | number[]), { headers: { 'content-type': doc.contentType, 'cache-control': 'private, no-store' } }));
 		}
 
 		// Every message is already persisted per (openemr_user, patient_id) in D1 (see the

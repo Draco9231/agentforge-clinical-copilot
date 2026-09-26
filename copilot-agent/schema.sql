@@ -84,3 +84,13 @@ CREATE TABLE IF NOT EXISTS guideline_chunks (
   embedding TEXT
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS guideline_fts USING fts5(id UNINDEXED, source, section, text);
+
+-- Week 2 click-to-source: the uploaded PDF itself, so the UI can render the page a citation points
+-- at and highlight the quoted text. OpenEMR's copy cannot be read back (W2_ARCHITECTURE F-2), so
+-- this is the copy the viewer uses. Capped at 1.8 MB per file by the Worker (D1 row limit is 2 MB).
+CREATE TABLE IF NOT EXISTS document_files (
+  document_id TEXT PRIMARY KEY REFERENCES documents(id),
+  content_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  data BLOB NOT NULL
+);

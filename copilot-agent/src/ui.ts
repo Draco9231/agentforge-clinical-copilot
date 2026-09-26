@@ -52,6 +52,19 @@ export function renderChatPage(openemrBaseUrl: string, apiSite: string): string 
   .badge.degraded { background: #fff3cd; color: #8a6300; }
   .cite { font-size: 0.78rem; color: #555; margin-top: 0.35rem; }
 
+
+  .src-link { color: #2b5fd9; cursor: pointer; text-decoration: underline dotted; }
+  .src-link:hover { text-decoration: underline; }
+  .viewer-overlay { position: fixed; inset: 0; background: rgba(20,22,40,0.55); display: none; align-items: center; justify-content: center; z-index: 50; }
+  .viewer-box { background: #fff; border-radius: 10px; width: min(900px, 96vw); max-height: 94vh; display: flex; flex-direction: column; overflow: hidden; }
+  .viewer-head { display: flex; justify-content: space-between; align-items: center; padding: 0.7rem 1rem; border-bottom: 1px solid #eee; font-size: 0.9rem; }
+  .viewer-status { padding: 0.5rem 1rem; font-size: 0.82rem; border-bottom: 1px solid #eee; }
+  .viewer-status.ok { background: #e8f8ec; color: #146c2e; }
+  .viewer-status.warn { background: #fff3cd; color: #8a6300; }
+  .viewer-scroll { overflow: auto; padding: 1rem; background: #e9eaf0; text-align: center; }
+  .viewer-page { position: relative; display: inline-block; box-shadow: 0 1px 6px rgba(0,0,0,0.25); background: #fff; }
+  .viewer-page canvas { display: block; }
+  .hl { position: absolute; background: rgba(255, 221, 0, 0.42); outline: 2px solid #e6a800; border-radius: 2px; pointer-events: none; }
   .composer { display: flex; gap: 0.5rem; padding: 0.75rem; border-top: 1px solid #eee; }
   .composer textarea { flex: 1; resize: none; padding: 0.55rem; border: 1px solid #ddd; border-radius: 6px; }
   .composer button { align-self: flex-end; }
@@ -119,6 +132,15 @@ export function renderChatPage(openemrBaseUrl: string, apiSite: string): string 
 </div>
 </div>
 
+<div id="viewerOverlay" class="viewer-overlay" onclick="if (event.target === this) closeViewer()">
+  <div class="viewer-box">
+    <div class="viewer-head"><span id="viewerTitle"></span><button class="btn-ghost" onclick="closeViewer()">Close</button></div>
+    <div id="viewerStatus" class="viewer-status"></div>
+    <div class="viewer-scroll"><div id="viewerPage" class="viewer-page"></div></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 let token = null;
 let patients = [];      // [{ id, name, dob }]
@@ -351,6 +373,116 @@ async function uploadLabPdf() {
   }
 }
 
+// ---- Week 2 click-to-source: render the cited PDF page and highlight the quoted text ----
+// The highlight is computed in the browser from the PDF's own text layer, so it doubles as a
+// runtime grounding check: if the model's quote is not on the cited page, the viewer says so
+// instead of drawing a box (W2_ARCHITECTURE "Risks" 1).
+const citeRegistry = [];
+const pdfCache = {};
+let pdfWorkerUrl = null;
+
+function registerCite(cite) { citeRegistry.push(cite); return citeRegistry.length - 1; }
+function isDocumentCite(c) { return c && (c.source_type === 'lab_pdf' || c.source_type === 'intake_form') && c.source_id; }
+function openSourceIdx(i) { openSource(citeRegistry[i]); }
+
+function normText(s) {
+  return String(s || '').toLowerCase().replace(new RegExp('[^a-z0-9.%/]+', 'g'), ' ').trim();
+}
+
+async function loadPdf(documentId) {
+  if (pdfCache[documentId]) return pdfCache[documentId];
+  if (!window.pdfjsLib) throw new Error('PDF viewer library failed to load');
+  if (!pdfWorkerUrl) {
+    const src = await (await fetch('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js')).text();
+    pdfWorkerUrl = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+  }
+  const res = await fetch('/api/documents/' + documentId + '/file', { headers: { Authorization: 'Bearer ' + token } });
+  if (res.status === 401) { sessionExpired(); throw new Error('Session expired'); }
+  if (!res.ok) throw new Error('Source document is not available (HTTP ' + res.status + ')');
+  const pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(await res.arrayBuffer()) }).promise;
+  pdfCache[documentId] = pdf;
+  return pdf;
+}
+
+async function openSource(cite) {
+  if (!isDocumentCite(cite)) return;
+  const overlay = document.getElementById('viewerOverlay');
+  const status = document.getElementById('viewerStatus');
+  const pageEl = document.getElementById('viewerPage');
+  overlay.style.display = 'flex';
+  document.getElementById('viewerTitle').textContent = (cite.source_type === 'lab_pdf' ? 'Lab report' : 'Intake form') + ' — cited source';
+  status.className = 'viewer-status';
+  status.textContent = 'Loading source document…';
+  pageEl.innerHTML = '';
+  try {
+    const pdf = await loadPdf(cite.source_id);
+    const m = /[0-9]+/.exec(String(cite.page_or_section || ''));
+    const pageNum = Math.min(Math.max(m ? parseInt(m[0], 10) : 1, 1), pdf.numPages);
+    const page = await pdf.getPage(pageNum);
+    const viewport = page.getViewport({ scale: 1.5 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width; canvas.height = viewport.height;
+    pageEl.style.width = viewport.width + 'px'; pageEl.style.height = viewport.height + 'px';
+    pageEl.appendChild(canvas);
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
+
+    const content = await page.getTextContent();
+    const items = content.items.filter(function (it) { return it.str && it.str.trim(); });
+    if (items.length === 0) {
+      status.className = 'viewer-status warn';
+      status.textContent = 'Page ' + pageNum + ': no text layer (scanned image) — the quote cannot be located automatically. Treat as unverified.';
+      return;
+    }
+    const quote = normText(cite.quote_or_value);
+    let full = '';
+    const spans = items.map(function (it) {
+      const n = normText(it.str);
+      const start = full.length;
+      full += n + ' ';
+      return { it: it, start: start, end: start + n.length };
+    });
+    let hit = [];
+    let mode = 'none';
+    const idx = quote ? full.indexOf(quote) : -1;
+    if (idx >= 0) {
+      hit = spans.filter(function (sp) { return sp.end > idx && sp.start < idx + quote.length; });
+      mode = 'exact';
+    } else if (quote) {
+      // Partial: any text run wholly contained in the quote (min 3 chars), e.g. a value split from its label.
+      hit = spans.filter(function (sp) { const t = full.slice(sp.start, sp.end); return t.length >= 3 && quote.indexOf(t) >= 0; });
+      if (hit.length) mode = 'partial';
+    }
+    hit.forEach(function (sp) {
+      const tx = window.pdfjsLib.Util.transform(viewport.transform, sp.it.transform);
+      const h = Math.hypot(tx[2], tx[3]);
+      const box = document.createElement('div');
+      box.className = 'hl';
+      box.style.left = tx[4] + 'px';
+      box.style.top = (tx[5] - h) + 'px';
+      box.style.width = (sp.it.width * viewport.scale) + 'px';
+      box.style.height = h + 'px';
+      pageEl.appendChild(box);
+    });
+    if (mode === 'exact') {
+      status.className = 'viewer-status ok';
+      status.textContent = 'Page ' + pageNum + ' — quoted text found in the document and highlighted: “' + cite.quote_or_value + '”';
+    } else if (mode === 'partial') {
+      status.className = 'viewer-status warn';
+      status.textContent = 'Page ' + pageNum + ' — only part of the quote was found (highlighted). Check the value against the page.';
+    } else {
+      status.className = 'viewer-status warn';
+      status.textContent = 'Page ' + pageNum + ' — the quoted text was NOT found on this page. Treat this extracted fact as unverified: “' + cite.quote_or_value + '”';
+    }
+  } catch (e) {
+    status.className = 'viewer-status warn';
+    status.textContent = 'Could not open the source: ' + (e && e.message ? e.message : e);
+  }
+}
+
+function closeViewer() { document.getElementById('viewerOverlay').style.display = 'none'; }
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeViewer(); });
+
 function renderDocumentCard(container, fileName, meta) {
   const el = document.createElement('div');
   el.className = 'msg document';
@@ -364,7 +496,7 @@ function renderDocumentCard(container, fileName, meta) {
 
   function row(label, value, cite) {
     return '<div class="doc-fact"><div>' + label + '</div><div class="doc-fact-value">' + (value || '') +
-      '<div class="doc-fact-cite">p.' + cite.page_or_section + ': &ldquo;' + cite.quote_or_value + '&rdquo;</div></div></div>';
+      '<div class="doc-fact-cite src-link" title="Click to view in the source document" onclick="openSourceIdx(' + registerCite(cite) + ')">p.' + cite.page_or_section + ': &ldquo;' + cite.quote_or_value + '&rdquo;</div></div></div>';
   }
 
   if (meta.doc_type === 'intake_form') {
@@ -388,7 +520,7 @@ function renderDocumentCard(container, fileName, meta) {
       html += '<div class="doc-fact">' +
         '<div>' + r.test_name + (r.collection_date ? '<div class="doc-fact-cite">' + r.collection_date + '</div>' : '') + '</div>' +
         '<div class="doc-fact-value ' + flagClass + '">' + valueText +
-          '<div class="doc-fact-cite">p.' + r.citation.page_or_section + ': &ldquo;' + r.citation.quote_or_value + '&rdquo;</div>' +
+          '<div class="doc-fact-cite src-link" title="Click to view in the source document" onclick="openSourceIdx(' + registerCite(r.citation) + ')">p.' + r.citation.page_or_section + ': &ldquo;' + r.citation.quote_or_value + '&rdquo;</div>' +
         '</div></div>';
     });
   }
@@ -411,7 +543,19 @@ function addMessageEl(container, role, text, meta) {
   if (meta && meta.citations && meta.citations.length) {
     const cite = document.createElement('div');
     cite.className = 'cite';
-    cite.textContent = 'Sources: ' + meta.citations.map(function (c) { return c.source_field; }).join(', ');
+    cite.appendChild(document.createTextNode('Sources: '));
+    meta.citations.forEach(function (c, i) {
+      const chip = document.createElement('span');
+      chip.textContent = c.source_field;
+      if (c.quote_or_value) chip.title = (c.source_type || '') + ': ' + c.quote_or_value;
+      if (isDocumentCite(c)) {
+        chip.className = 'src-link';
+        chip.title = 'Click to view in the source document — ' + (c.quote_or_value || '');
+        chip.onclick = function () { openSource(c); };
+      }
+      cite.appendChild(chip);
+      if (i < meta.citations.length - 1) cite.appendChild(document.createTextNode(', '));
+    });
     el.appendChild(cite);
   }
   if (meta && meta.uncertainAbout && meta.uncertainAbout.length) {
