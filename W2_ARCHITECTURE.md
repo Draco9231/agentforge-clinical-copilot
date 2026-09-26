@@ -15,7 +15,7 @@ Cloudflare Worker + D1 as Week 1; OpenEMR (Railway) remains the system of record
 | Hybrid RAG (FTS5 + embeddings, RRF, reranker) over a 14-chunk guideline corpus | **Built; retrieval verified live, end-to-end chat not yet observed** |
 | Unified citation contract on every cited claim in the answer | **Built** |
 | Eval gate: 74 cases, 7 categories, boolean rubrics, pre-push hook + GitHub Actions job | **Built, sabotage-tested** (hook); CI job added 2026-09-25, becomes PR-blocking once set as a required check |
-| Live-model eval tier (extraction vs ground truth, quote grounding) | **Built; not yet run** (needs a real API key in `.dev.vars`) |
+| Live-model eval tier (extraction vs ground truth, quote grounding) | **Built, run 2026-09-25: 5/5 rubrics on both sample documents** ($0.044) |
 | Click-to-source viewer: cited PDF page rendered with the quote highlighted | **Built** (pdf.js, text-layer boxes; verified in a local harness, no text layer = warning only) |
 | Cost and latency report | **Written**: [COST_LATENCY_REPORT.md](./COST_LATENCY_REPORT.md); post-concise-prompt latency not yet measured |
 | Writing intake medications/allergies back into OpenEMR records | **Not built** (deliberate; see Risks) |
@@ -193,8 +193,10 @@ extraction on `samples/*.pdf` against `samples/expected.json` and grades five bo
 document: `schema_valid`, `citation_present`, `factually_consistent` (expected facts present with
 right values/flags), `no_invention` (nothing extracted that is not in the truth set — a fabricated
 medication or allergy), and `quote_grounded` (every quoted citation appears in the source text).
-It costs a few cents and needs a real API key. **It has not been run**: the local `.dev.vars` key
-is a placeholder, so no extraction-accuracy claim is made in this document.
+It costs a few cents and needs a real API key. **Run on 2026-09-25: all five rubrics passed on
+both documents** (lab: 12.4 s, $0.0201; intake: 9.7 s, $0.0239; both high confidence). The sample
+set is two clean, text-layer synthetic PDFs, so this shows the extraction path is sound, not that
+it is accurate on scanned or handwritten documents.
 
 ## Findings (this project's audit habit, applied to Week 2)
 
@@ -256,7 +258,8 @@ p50/p95 latency for the Week 2 steps (see the cost and latency report, still to 
 2. **The push gate is offline.** It proves the deterministic layers (schemas, verification, log
    redaction, routing, retrieval math, dedupe) cannot regress silently. It does not measure live
    extraction accuracy or answer quality; a bad prompt change would not fail it. The on-demand live
-   tier addresses this but has not been run, and is not wired into the hook (cost, network).
+   tier addresses this (it passed on 2026-09-25) but it is on-demand only and not wired into the hook
+   (cost, network), so a later prompt change is not caught unless someone runs it.
 3. **The hook is local; the CI job needs a branch rule.** The hook must be installed per clone and
    can be bypassed with `--no-verify`. The GitHub Actions job runs the same gate server-side, but
    it only blocks merges once it is set as a required check in the repository's branch protection

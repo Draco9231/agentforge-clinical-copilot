@@ -15,7 +15,9 @@ Pricing: Claude Sonnet 5 at $2 / $10 per million input / output tokens (see AI_C
 | Week 1 load tests and eval runs | ~$2–3 | Estimated in AI_COST_ANALYSIS.md from call counts, not from logs |
 
 Not included: Claude Code / IDE usage, Langfuse Cloud, Railway. The live extraction eval
-(`npm run eval:live`) has not been run at the time of writing; it adds a few cents.
+(`npm run eval:live`, run 2026-09-25) cost a further $0.044 (lab $0.0201, intake $0.0239); its
+extraction times (12.4 s and 9.7 s) are from a local machine, so they include a slower path than
+the Worker's.
 
 ## 2. Cost per operation (measured)
 
@@ -93,5 +95,4 @@ next step.
 
 - Chat latency and cost after the concise-prompt change, on the Week 2 path (needs an authenticated
   run: `BASE_URL=... OPENEMR_ADMIN_PASSWORD=... PATIENT_ID=... node copilot-agent/scripts/load-test.mjs 10`).
-- Live extraction accuracy and cost across the sample documents (`npm run eval:live`).
 - p95 under 50 concurrent users for the Week 2 path.
